@@ -1,0 +1,1 @@
+../../../.agents/skills/windows-sandbox-tests/SKILL.md
