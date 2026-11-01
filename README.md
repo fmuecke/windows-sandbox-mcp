@@ -7,6 +7,9 @@ https://github.com/fmuecke/windows-sandbox-mcp -->
 MCP server that lets a restricted agent run risky commands in a fresh, offline
 Windows Sandbox guest, without access to anything else on the host.
 Design and validated `wsb.exe` behaviour: [SPEC.md](SPEC.md).
+Reporting vulnerabilities: [SECURITY.md](SECURITY.md).
+
+`wsb-mcp` is the name of the executable, the project and the solution.
 
 ```
 Agent host ──stdio──> wsb-mcp proxy ──named pipe──> wsb-mcp serve ──> wsb.exe
@@ -79,6 +82,13 @@ config file or its log directory is inside `allowedRoot`.
    ```
    Do not build from `C:\AgentSandbox` directly: it is writable by the agent
    (and by *Authenticated Users*).
+
+   Instead of building, you can use a release from the
+   [Releases](https://github.com/fmuecke/windows-sandbox-mcp/releases) page.
+   CI builds each release from its tag, after the tests pass.
+   1. Download the zip into a folder the agent cannot write.
+   2. Check it against `SHA256SUMS.txt` with `Get-FileHash`.
+   3. Extract it into the protected `C:\Tools\wsb-mcp` from above.
 2. Create `%LOCALAPPDATA%\wsb-mcp\config.json`:
    ```json
    {
