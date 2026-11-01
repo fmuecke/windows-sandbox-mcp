@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Florian Mücke
+// SPDX-License-Identifier: MIT
+// https://github.com/fmuecke/windows-sandbox-mcp
 // Fake wsb.exe mimicking `wsb --raw` behaviour observed on 2026-11-01 (see SPEC.md).
 // State lives in FAKE_WSB_STATE (a directory). Every invocation's argv is appended to
 // calls.jsonl there so tests can assert exact argument transport.

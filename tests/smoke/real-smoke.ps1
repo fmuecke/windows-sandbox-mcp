@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Florian Mücke
+# SPDX-License-Identifier: MIT
+# https://github.com/fmuecke/windows-sandbox-mcp
 # Real end-to-end smoke test. Run as the AGENT account while the broker
 # (`wsb-mcp serve`) runs as the broker account with a real Windows Sandbox.
 # Talks MCP through `wsb-mcp proxy`, exactly like an MCP host would.

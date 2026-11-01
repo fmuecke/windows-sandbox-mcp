@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Florian Mücke
+# SPDX-License-Identifier: MIT
+# https://github.com/fmuecke/windows-sandbox-mcp
 # Fake wsb.exe mimicking `wsb --raw` behaviour observed on 2026-11-01:
 #   exec exits 0 once the guest process launched and reports {"ExitCode": n}.
 # Guest commands understood: 'cmd.exe /c exit <n>', 'launch-fail', 'no-json'.

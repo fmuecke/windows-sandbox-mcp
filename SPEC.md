@@ -1,3 +1,7 @@
+<!-- SPDX-FileCopyrightText: 2026 Florian Mücke
+SPDX-License-Identifier: MIT
+https://github.com/fmuecke/windows-sandbox-mcp -->
+
 # wsb-mcp — Specification (draft v0.1)
 
 ## Purpose
@@ -276,14 +280,23 @@ log file outside `allowedRoot`, so the agent cannot tamper with it.
    described ACL. (Q1)~~ Passed.
 2. ~~`wsb start --config <hardened xml>` → no network in guest.~~ Passed.
 3. ~~`wsb share` without `-w` → guest write to `C:\SandboxIn` fails.~~ Passed.
-4. Path rules: junction under root pointing outside → rejected; path not
-   readable by `AgentSandbox` → rejected; swap attempt during share → blocked.
-5. Pipe: connection from a different user → rejected.
-6. Lifecycle: kill proxy, wait for idle timeout, Ctrl+C broker → guest gone.
+4. ~~Path rules: junction under root pointing outside → rejected; path not
+   readable by `AgentSandbox` → rejected~~ (passed in the real run);
+   swap attempt during share → blocked (unit test only).
+5. Pipe: connection from a different user → rejected. Pipe ACL and SID check
+   are in place; only anonymous rejection is tested.
+6. Lifecycle: ~~proxy disconnect → guest gone~~ (passed in the real run);
+   ~~Ctrl+C broker → guest gone~~ (passed; `wsb list` empty afterwards);
+   idle timeout (unit test only).
 7. ~~Junction inside a writable mapped folder pointing to a directory readable by
    the broker user but not by the agent → the guest must not be able to list it.~~
    Passed (links are resolved in the guest).
 
-Steps 4 (except cross-account rule 4), 5 (anonymous rejection) and 6
-(disconnect stop, idle timeout) are covered by `tests/WsbMcp.Tests` against a
-fake `wsb.exe`. Cross-account behaviour still needs a real run.
+**Real run 2026-11-01** (`tests/smoke/real-smoke.ps1 -HoldForCtrlC`, broker
+published from `bd235d8` as the interactive user, proxy as `AgentSandbox`):
+21/21 checks passed. These were rules 1–4 across accounts, mapping
+input/output, input read-only, no network, guest exit code, `runAs: user`
+with lazy connect, exec timeout, `@` rejection, status, stop, stop on
+disconnect, and proxy ending on broker Ctrl+C. Afterwards `wsb list` on the
+host was empty. `tests/WsbMcp.Tests` covers
+the remaining items against a fake `wsb.exe`.

@@ -1,1 +1,0 @@
-../../../.agents/skills/definition-of-done/SKILL.md

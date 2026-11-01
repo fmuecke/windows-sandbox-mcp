@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Florian Mücke
+# SPDX-License-Identifier: MIT
+# https://github.com/fmuecke/windows-sandbox-mcp
 # Host-only tests for WindowsSandboxTest guest exit-code handling, using a fake
 # wsb.exe. Run: pwsh -NoProfile -File tests\WindowsSandboxTest.Tests.ps1
 Set-StrictMode -Version Latest

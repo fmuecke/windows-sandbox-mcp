@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Florian Mücke
+// SPDX-License-Identifier: MIT
+// https://github.com/fmuecke/windows-sandbox-mcp
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;

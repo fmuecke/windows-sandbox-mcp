@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Florian Mücke
+// SPDX-License-Identifier: MIT
+// https://github.com/fmuecke/windows-sandbox-mcp
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Security.AccessControl;

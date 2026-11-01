@@ -2,3 +2,5 @@ bin/
 obj/
 tests/.work/
 
+.mcp.json
+.claude/settings.local.json
