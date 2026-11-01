@@ -1,0 +1,231 @@
+# wsb-mcp — Specification (draft v0.1)
+
+## Purpose
+
+A restricted agent (OS user `AgentSandbox`) cannot start Windows Sandbox. wsb-mcp
+lets it run risky commands in a fresh, offline Windows Sandbox guest and exchange
+files with it — without granting any other host access.
+
+**Success:** the agent can start a guest, map an input and an output folder, run
+commands, inspect files the guest wrote, and stop the guest; no tool call lets it
+reach host resources it could not already reach as `AgentSandbox`.
+
+## Trust model
+
+| Component | Runs as | Trust |
+|-----------|---------|-------|
+| Broker (`wsb-mcp serve`) | Interactive user able to run `wsb.exe` | Trusted |
+| Proxy (`wsb-mcp proxy`) | `AgentSandbox`, launched by the agent host via stdio | Untrusted |
+| Guest | Windows Sandbox VM | Untrusted, disposable |
+
+The broker is a privilege bridge. Every tool argument is attacker-controlled.
+The broker must never perform an action on behalf of the client that the client
+could not perform itself, except starting/stopping/exec-ing the one guest it owns.
+
+## Architecture
+
+```
+Agent host ──stdio(MCP)──> wsb-mcp proxy ──named pipe──> wsb-mcp serve ──> wsb.exe
+            (AgentSandbox)                 (ACL: AgentSandbox)  (real user)
+```
+
+- Single C# executable (.NET, official `ModelContextProtocol` SDK), two modes:
+  - `serve`: hosts the MCP server on a named pipe.
+  - `proxy`: byte-forwards stdin/stdout ↔ the pipe. No logic, no parsing.
+- Started manually in v1 (`wsb-mcp serve --config <file>`). Scheduled task /
+  service later; nothing in the design may depend on an interactive console.
+
+### Pipe security
+
+- Pipe name fixed in broker config (default `\\.\pipe\wsb-mcp`).
+- Pipe ACL: full control for broker user; read/write for the configured agent
+  account SID only. No `Everyone`, no `Authenticated Users`, deny network logons.
+- `FILE_FLAG_FIRST_PIPE_INSTANCE` so another process cannot squat the name.
+- On connect, the broker verifies the client token SID equals the configured
+  agent SID (defence in depth beyond the ACL); otherwise disconnect.
+- One client connection at a time.
+
+## Broker configuration (host-only, never exposed via tools)
+
+| Key | Example | Meaning |
+|-----|---------|---------|
+| `agentAccount` | `AgentSandbox` | Only account allowed to connect |
+| `allowedRoot` | `C:\AgentSandbox` | All mapped folders must be below this |
+| `pipeName` | `wsb-mcp` | Named pipe name |
+| `idleTimeoutMinutes` | `30` | Stop guest after no tool call for this long |
+| `maxExecTimeoutSeconds` | `1800` | Upper bound for `sandbox_exec` timeout |
+| `startupTimeoutSeconds` | `120` | Wait for guest readiness (share retry) |
+
+## Hard-coded guest configuration
+
+Passed to `wsb start` as a fixed config; no tool parameter can alter it.
+
+- Networking: **Disable**
+- vGPU: Disable
+- Clipboard redirection: Disable
+- Audio input: Disable
+- Video input: Disable
+- Printer redirection: Disable
+- Protected client: Enable
+- No logon command, no config-level mapped folders (mapping is done via
+  `wsb share` after path validation).
+
+## Folder mapping rules
+
+Guest paths are fixed: input → `C:\SandboxIn` (read-only), output →
+`C:\SandboxOut` (writable). If input and output resolve to the same directory,
+only one writable mapping is made at `C:\SandboxOut` (and `C:\SandboxIn` is absent).
+
+Validation, performed for each host path, in this order:
+
+1. Must be absolute, local (no UNC, no `\\?\GLOBALROOT`, no device paths), and an
+   existing directory.
+2. Open the directory handle (`FILE_FLAG_BACKUP_SEMANTICS`, **no**
+   `FILE_SHARE_DELETE`) and obtain the final path via `GetFinalPathNameByHandle`.
+   This resolves junctions/symlinks/8.3 names.
+3. Final path must be equal to or below the final path of `allowedRoot`
+   (case-insensitive, separator-aware prefix comparison).
+4. **Impersonate the pipe client** and check access on the final path:
+   read+list for input; read+write+create for output. Revert impersonation.
+5. Keep the handle open until `wsb share` returned, so the directory cannot be
+   swapped for a junction between check and share (TOCTOU).
+
+Any failure → tool error naming the rule that failed; no guest state changes.
+
+## Tools
+
+All tools return structured JSON. Errors are MCP tool errors with a message.
+
+### `sandbox_start`
+
+| Param | Type | Required |
+|-------|------|----------|
+| `inputPath` | string | no |
+| `outputPath` | string | no |
+
+- Refuses if any Windows Sandbox is running (`wsb list` non-empty), including one
+  the user opened manually.
+- Validates paths (see above) **before** starting the guest.
+- Starts guest, retries `wsb share` until ready or `startupTimeoutSeconds`.
+- On any failure after start: stops the guest before returning the error.
+- Returns `{ id, inputGuestPath?, outputGuestPath?, startupSeconds }`.
+
+### `sandbox_exec`
+
+| Param | Type | Required | Default |
+|-------|------|----------|---------|
+| `command` | string | yes | |
+| `workingDirectory` | string (guest path) | no | output guest path, else `C:\` |
+| `runAs` | `system` \| `user` | no | `system` |
+| `timeoutSeconds` | int | no | `maxExecTimeoutSeconds` |
+
+- Requires a running guest owned by this broker.
+- Runs `wsb --raw exec --id <id> -d <dir> -r <System|ExistingLogin> -c <command>`.
+  `system` → `System` (`NT AUTHORITY\SYSTEM`); `user` → `ExistingLogin`
+  (`WDAGUtilityAccount`, elevated), with the lazy `wsb connect` from Q7.
+  Both are elevated.
+- Returns `{ exitCode, durationSeconds, timedOut }`. `exitCode` is the guest
+  process exit code parsed from `wsb --raw exec` JSON (`ExitCode`), not the
+  `wsb.exe` exit code. A nonzero `wsb.exe` exit (launch failure) is a tool error
+  carrying the `wsb` message.
+- On timeout the broker kills its `wsb.exe exec` client process; the guest
+  process is unaffected.
+- `wsb exec` does not return guest stdout/stderr. The agent redirects output to
+  files under the output mapping itself (e.g.
+  `cmd /c mytest.exe > C:\SandboxOut\log.txt 2>&1`) and reads them on the host.
+
+### `sandbox_status`
+
+No params. Returns `{ running, id?, startedAt?, lastActivityAt?, inputHostPath?,
+outputHostPath? }`.
+
+### `sandbox_stop`
+
+No params. Stops the owned guest; idempotent (no guest → success, `stopped: false`).
+Returns `{ stopped, totalSeconds }`.
+
+## Lifecycle guarantees
+
+- At most one guest, owned by the broker.
+- Guest is stopped on: `sandbox_stop`, idle timeout, client (proxy) disconnect,
+  broker shutdown (Ctrl+C / SIGTERM / service stop), and unhandled broker error.
+- Broker never stops a guest it did not start.
+
+## Logging
+
+Broker logs every tool call (tool, arguments, result, duration) to a host-only
+log file outside `allowedRoot`, so the agent cannot tamper with it.
+
+## Out of scope (v1)
+
+- Exposing any WSB configuration to the agent.
+- Networking in the guest.
+- Multiple concurrent guests or clients.
+- Capturing guest stdout/stderr by the broker.
+- Non-elevated (standard user) execution. Both `runAs` values are elevated; an
+  agent that needs a standard user creates one in the guest itself.
+
+## v2 backlog (test convenience)
+
+- Copy/staging of input (psm1 pattern) for tests that must not touch originals.
+- Standard-user `runAs`.
+- Provisioning helpers, e.g. copying VC++ debug runtime (vcredist debug) DLLs
+  into the guest, mapping a host PowerShell 7 installation read-only.
+- Run broker as scheduled task at logon (service mode would lose `runAs: user`).
+
+## Decisions
+
+- **Q1** Agent sandbox → broker named pipe connectivity: **validated
+  2026-11-01** (throwaway probe). The restricted agent opened a pipe created by the real
+  user, with an ACL allowing only the broker user and the agent SID and denying
+  network logons. The broker identified the client as `AgentSandbox` and
+  impersonated it successfully. The proxy connects with `Impersonation` level
+  so the broker can run path access checks as the client.
+- **Q2** Exec timeout: report only (`timedOut: true`); guest keeps running.
+- **Q3** Proxy disconnect stops the guest. (Narrowest choice; may be relaxed later.)
+- **Q4** Broker does not capture stdout/stderr; the agent redirects to files.
+- **Q7** `runAs: user` is supported via a lazily created session. On the first
+  `user` exec, the broker runs `wsb connect` (opens a visible sandbox window on
+  the host desktop), then retries `ExistingLogin` until the session exists.
+  **Validated 2026-11-01** (throwaway probe). Consequence: the
+  broker must run in an interactive desktop session; a session-0 service cannot
+  offer `runAs: user`.
+  Algorithm: run `ExistingLogin` exec; on `0x80070520` run `wsb connect`
+  (returns immediately) and retry every 2 s up to 60 s. Same path recovers if
+  the user closed the sandbox window.
+  Note: `user` is `WDAGUtilityAccount`, a local admin at **High** integrity
+  (effectively elevated). Neither `runAs` value gives a standard-user token.
+
+## Observed wsb behaviour (probe run 2026-11-01, ProtectedClient enabled)
+
+- `wsb --raw start --config "<Configuration>…</Configuration>"` accepts the
+  hard-coded config inline and returns `{"Id": "<guid>"}` (~1.6 s).
+- `wsb --raw list` returns `{"WindowsSandboxEnvironments": [{"Id": …}]}`.
+- `share` without `-w` is read-only in the guest (write → access denied);
+  with `-w` it is writable. Both succeeded on the first attempt after start.
+- Networking disabled: guest has only the loopback IPv4 address; DNS and
+  outbound TCP fail.
+- **`wsb exec` always exits 0 if it launched the process. The guest exit code is
+  only in the JSON output: `{"ExitCode": 7}`.** The broker must parse it.
+  (WindowsSandboxTest 1.0.0 checked only the `wsb` exit code and missed guest
+  failures; fixed in 1.1.0.)
+- `wsb exec` waits for the guest process to finish and returns no guest
+  stdout/stderr.
+- `-r ExistingLogin` fails with `0x80070520` (no logon session) when no user
+  session is active in the guest. `System` works.
+- `wsb connect --id` returns within ~1 s (exit 0) and opens the sandbox window;
+  the user session is usable ~4 s later. A second `connect` also exits 0.
+  Connect client processes do not outlive `wsb stop`.
+- Session user: `WDAGUtilityAccount`, member of `Administrators`, High
+  mandatory level, `net session` succeeds.
+
+## Validation plan (cheapest first)
+
+1. ~~From agent sandbox: open a named pipe created by the real user with the
+   described ACL. (Q1)~~ Passed.
+2. ~~`wsb start --config <hardened xml>` → no network in guest.~~ Passed.
+3. ~~`wsb share` without `-w` → guest write to `C:\SandboxIn` fails.~~ Passed.
+4. Path rules: junction under root pointing outside → rejected; path not
+   readable by `AgentSandbox` → rejected; swap attempt during share → blocked.
+5. Pipe: connection from a different user → rejected.
+6. Lifecycle: kill proxy, wait for idle timeout, Ctrl+C broker → guest gone.
