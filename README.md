@@ -66,29 +66,41 @@ The broker runs with your rights. Anything the agent can write must not
 influence it, so the broker **refuses to start** if its executable, its
 config file or its log directory is inside `allowedRoot`.
 
-1. Build from a reviewed commit in a clone the agent cannot modify. Publish
-   to a folder only you can write but the agent can execute; the proxy runs
-   from there too:
+1. Create the program folder. Only you may write to it; the agent may only
+   read and execute. Do this for both install options below; the proxy runs
+   from here too:
    ```powershell
-   $src = "$env:LOCALAPPDATA\wsb-mcp\src"
-   git -c safe.directory=C:/AgentSandbox/wsb-mcp clone --no-local C:\AgentSandbox\wsb-mcp $src   # once
-   git -C $src fetch origin
-   git -C $src checkout --detach <reviewed-commit>
-
    $dir = 'C:\Tools\wsb-mcp'
    New-Item -ItemType Directory $dir -Force | Out-Null
    icacls $dir /inheritance:r /grant:r "${env:USERNAME}:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" "AgentSandbox:(OI)(CI)RX"
-   dotnet publish "$src\src\WsbMcp" -c Release -o $dir
    ```
-   Do not build from `C:\AgentSandbox` directly: it is writable by the agent
-   (and by *Authenticated Users*).
+   Do not skip `icacls`. A folder created by hand under `C:\` inherits rights
+   that let every signed-in user, the agent included, add or change files.
+   The agent could then replace the exe the broker runs with your rights.
 
-   Instead of building, you can use a release from the
-   [Releases](https://github.com/fmuecke/windows-sandbox-mcp/releases) page.
-   CI builds each release from its tag, after the tests pass.
-   1. Download the zip into a folder the agent cannot write.
-   2. Check it against `SHA256SUMS.txt` with `Get-FileHash`.
-   3. Extract it into the protected `C:\Tools\wsb-mcp` from above.
+   Then fill the folder in one of two ways:
+   - **From a release.** Download the zip from the
+     [Releases](https://github.com/fmuecke/windows-sandbox-mcp/releases) page.
+     CI builds and tests it from its tag, and GitHub signs its build provenance.
+     Verify that, then extract:
+     ```powershell
+     $zip = "$env:USERPROFILE\Downloads\wsb-mcp-<version>-win-x64.zip"
+     gh attestation verify $zip --repo fmuecke/windows-sandbox-mcp
+     Expand-Archive $zip -DestinationPath $dir -Force
+     ```
+     `SHA256SUMS.txt` only detects a damaged download. It does not prove who
+     built the zip; the attestation does.
+   - **From source.** Build a reviewed commit in a clone the agent cannot
+     modify:
+     ```powershell
+     $src = "$env:LOCALAPPDATA\wsb-mcp\src"
+     git clone https://github.com/fmuecke/windows-sandbox-mcp $src   # once
+     git -C $src fetch origin
+     git -C $src checkout --detach <reviewed-commit>
+     dotnet publish "$src\src\WsbMcp" -c Release -o $dir
+     ```
+     Do not build in a checkout the agent can write, such as one below
+     `C:\AgentSandbox`.
 2. Create `%LOCALAPPDATA%\wsb-mcp\config.json`:
    ```json
    {

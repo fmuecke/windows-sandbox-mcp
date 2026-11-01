@@ -35,6 +35,11 @@ public sealed class McpSessionTests : IDisposable
         var response = await Send("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""");
         Assert.Equal("2025-03-26", (string?)response!["result"]!["protocolVersion"]);
         Assert.Equal("wsb-mcp", (string?)response["result"]!["serverInfo"]!["name"]);
+        // From the assembly (X.Y.Z or X.Y.Z-suffix from the release tag), without "+commit".
+        var serverVersion = (string?)response["result"]!["serverInfo"]!["version"] ?? "";
+        var assemblyVersion = typeof(McpSession).Assembly.GetName().Version!.ToString(3);
+        Assert.True(serverVersion == assemblyVersion || serverVersion.StartsWith(assemblyVersion + "-", StringComparison.Ordinal),
+            $"server version '{serverVersion}' vs assembly '{assemblyVersion}'");
         Assert.True(response["result"]!["capabilities"]!["tools"] is JsonObject, "tools capability");
 
         response = await Send("""{"jsonrpc":"2.0","id":"a","method":"initialize","params":{"protocolVersion":"1999-01-01"}}""");

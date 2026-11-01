@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 // https://github.com/fmuecke/windows-sandbox-mcp
 using System.Globalization;
+using System.Reflection;
 using System.Text.Json.Nodes;
 
 namespace WsbMcp;
@@ -9,7 +10,14 @@ namespace WsbMcp;
 /// <summary>Tool names, descriptions and input schemas advertised to the client.</summary>
 public sealed class ToolCatalog
 {
-    public const string Version = "0.1.0";
+    /// <summary>
+    /// Product version (csproj &lt;Version&gt;, overridden by the release tag), without the
+    /// "+commit" build metadata.
+    /// </summary>
+    public static string Version { get; } =
+        typeof(ToolCatalog).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion.Split('+')[0] ?? "0.0.0";
+
     public const string Start = "sandbox_start";
     public const string Exec = "sandbox_exec";
     public const string Status = "sandbox_status";
