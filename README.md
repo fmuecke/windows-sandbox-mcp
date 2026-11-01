@@ -2,7 +2,7 @@
 SPDX-License-Identifier: MIT
 https://github.com/fmuecke/windows-sandbox-mcp -->
 
-# wsb-mcp
+# Windows Sandbox MCP
 
 MCP server that lets a restricted agent run risky commands in a fresh, offline
 Windows Sandbox guest, without access to anything else on the host.
