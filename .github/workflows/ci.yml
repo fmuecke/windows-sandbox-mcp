@@ -52,7 +52,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $versionArg = if ($env:VERSION) { @("-p:Version=$env:VERSION") } else { @() }
+          # @( ) around the whole if: an if-expression unrolls a one-element array to a
+          # string, and splatting a string passes each character as an argument.
+          $versionArg = @(if ($env:VERSION) { "-p:Version=$env:VERSION" })
           dotnet build -c Release @versionArg
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Broker tests
@@ -118,7 +120,7 @@ jobs:
           PRERELEASE: ${{ needs.test.outputs.prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $assets = (Get-ChildItem dist -File).FullName
+          $assets = @((Get-ChildItem dist -File).FullName)
 
           # Re-runnable: a draft from a failed earlier run is reused; a published
           # release is never touched again.
