@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WsbMcp/WsbMcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FakeWsb/FakeWsb.csproj" />
+    <Project Path="tests/WsbMcp.Tests/WsbMcp.Tests.csproj" />
+  </Folder>
+</Solution>

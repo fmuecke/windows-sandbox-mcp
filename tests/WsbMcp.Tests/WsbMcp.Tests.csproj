@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Zero-dependency test runner: dotnet run (project tests/WsbMcp.Tests) [filter] -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>WsbMcp.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WsbMcp\WsbMcp.csproj" />
+    <ProjectReference Include="..\FakeWsb\FakeWsb.csproj" />
+  </ItemGroup>
+</Project>

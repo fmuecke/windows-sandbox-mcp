@@ -29,9 +29,14 @@ Agent host ──stdio(MCP)──> wsb-mcp proxy ──named pipe──> wsb-mcp
             (AgentSandbox)                 (ACL: AgentSandbox)  (real user)
 ```
 
-- Single C# executable (.NET, official `ModelContextProtocol` SDK), two modes:
+- Single C# executable (.NET 10, no third-party dependencies), two modes:
   - `serve`: hosts the MCP server on a named pipe.
   - `proxy`: byte-forwards stdin/stdout ↔ the pipe. No logic, no parsing.
+- MCP is implemented directly (JSON-RPC 2.0, newline-delimited JSON; `initialize`,
+  `ping`, `tools/list`, `tools/call`; protocol versions 2025-06-18, 2025-03-26,
+  2024-11-05). The official SDK was not available offline, and the subset is
+  small; zero dependencies also keeps the trusted broker's supply chain empty.
+  Messages are limited to 1 MiB; an oversized message drops the client.
 - Started manually in v1 (`wsb-mcp serve --config <file>`). Scheduled task /
   service later; nothing in the design may depend on an interactive console.
 
@@ -43,7 +48,10 @@ Agent host ──stdio(MCP)──> wsb-mcp proxy ──named pipe──> wsb-mcp
 - `FILE_FLAG_FIRST_PIPE_INSTANCE` so another process cannot squat the name.
 - On connect, the broker verifies the client token SID equals the configured
   agent SID (defence in depth beyond the ACL); otherwise disconnect.
-- One client connection at a time.
+- One client connection at a time. The single pipe instance is reused
+  (disconnect + wait) so there is no window in which the name can be squatted.
+- The client must connect with `Impersonation` level; `Identification` or lower
+  is rejected (path checks need to open files as the client).
 
 ## Broker configuration (host-only, never exposed via tools)
 
@@ -55,6 +63,12 @@ Agent host ──stdio(MCP)──> wsb-mcp proxy ──named pipe──> wsb-mcp
 | `idleTimeoutMinutes` | `30` | Stop guest after no tool call for this long |
 | `maxExecTimeoutSeconds` | `1800` | Upper bound for `sandbox_exec` timeout |
 | `startupTimeoutSeconds` | `120` | Wait for guest readiness (share retry) |
+| `logPath` | `%LOCALAPPDATA%\wsb-mcp\broker.log` | JSON-lines log |
+| `wsbPath` | `wsb.exe` | wsb executable (override for tests) |
+
+Unknown keys are rejected. The broker refuses to start if its executable, the
+config file or the log directory is inside `allowedRoot` (agent-writable), or if
+`agentAccount` is the broker's own account.
 
 ## Hard-coded guest configuration
 
@@ -82,7 +96,11 @@ Validation, performed for each host path, in this order:
    existing directory.
 2. Open the directory handle (`FILE_FLAG_BACKUP_SEMANTICS`, **no**
    `FILE_SHARE_DELETE`) and obtain the final path via `GetFinalPathNameByHandle`.
-   This resolves junctions/symlinks/8.3 names.
+   This resolves junctions/symlinks/8.3 names. The handle must include a data
+   right (`FILE_LIST_DIRECTORY`): attribute-only handles do not take part in
+   share-mode checks and do not block rename/delete (verified by test). If the
+   normalized name is not available (no list access on an ancestor), the opened
+   name is used; it may keep 8.3 components, which can only cause rejections.
 3. Final path must be equal to or below the final path of `allowedRoot`
    (case-insensitive, separator-aware prefix comparison).
 4. **Impersonate the pipe client** and check access on the final path:
@@ -91,6 +109,31 @@ Validation, performed for each host path, in this order:
    swapped for a junction between check and share (TOCTOU).
 
 Any failure → tool error naming the rule that failed; no guest state changes.
+
+### Links inside a mapped folder (validated 2026-11-01)
+
+The rules above pin only the mapped directory itself. The agent can create
+junctions inside a writable mapped folder at any time (no privilege needed;
+directory/file symlinks need a privilege that neither the agent nor the broker
+user had). Probed with junctions created before and after the share, pointing at
+a host directory readable only by the broker user:
+
+- The guest sees the junction as a reparse point and **resolves its target in
+  the guest namespace**. The host never follows it: with a decoy at the same
+  path inside the guest, the guest read the decoy, and writes went to the guest
+  copy; the host directory was unchanged.
+- Without a decoy the target simply does not exist in the guest
+  ("Could not find a part of the path"), for both System and the session user.
+- `wsb share` does not modify the ACL of the shared folder.
+
+Conclusion: links inside a mapped folder cannot leak or change host data through
+the guest. The broker itself never traverses the contents of mapped folders.
+### Arguments passed to wsb.exe
+
+All arguments go through an argv list (no shell). Agent-supplied guest strings
+(`command`, `workingDirectory`) must be non-empty, ≤ 8000 chars, contain no NUL,
+and must not start with `-` (option injection) or `@` (wsb's command-line parser
+would read a response file **on the host** as the broker user).
 
 ## Tools
 
@@ -229,3 +272,10 @@ log file outside `allowedRoot`, so the agent cannot tamper with it.
    readable by `AgentSandbox` → rejected; swap attempt during share → blocked.
 5. Pipe: connection from a different user → rejected.
 6. Lifecycle: kill proxy, wait for idle timeout, Ctrl+C broker → guest gone.
+7. ~~Junction inside a writable mapped folder pointing to a directory readable by
+   the broker user but not by the agent → the guest must not be able to list it.~~
+   Passed (links are resolved in the guest).
+
+Steps 4 (except cross-account rule 4), 5 (Identification-level rejection) and 6
+(disconnect stop, idle timeout) are covered by `tests/WsbMcp.Tests` against a
+fake `wsb.exe`. Cross-account behaviour still needs a real run.
