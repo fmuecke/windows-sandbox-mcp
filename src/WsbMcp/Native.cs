@@ -10,6 +10,7 @@ internal static class Native
     public const uint FILE_ADD_FILE = 0x0002;
     public const uint FILE_ADD_SUBDIRECTORY = 0x0004;
     public const uint FILE_READ_ATTRIBUTES = 0x0080;
+    public const uint READ_CONTROL = 0x00020000;
     public const uint SYNCHRONIZE = 0x00100000;
 
     public const uint FILE_SHARE_READ = 0x1;
@@ -105,6 +106,64 @@ internal static class Native
             throw new Win32Exception(Marshal.GetLastWin32Error());
         }
         return (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    }
+
+    private const int SE_FILE_OBJECT = 1;
+    private const uint OWNER_SECURITY_INFORMATION = 0x1;
+    private const uint GROUP_SECURITY_INFORMATION = 0x2;
+    private const uint DACL_SECURITY_INFORMATION = 0x4;
+    private const uint LABEL_SECURITY_INFORMATION = 0x10;
+
+    [DllImport("advapi32.dll")]
+    private static extern uint GetSecurityInfo(
+        SafeFileHandle handle, int objectType, uint securityInfo,
+        IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl, out IntPtr securityDescriptor);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GenericMapping
+    {
+        public uint Read, Write, Execute, All;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AccessCheck(
+        IntPtr securityDescriptor, SafeAccessTokenHandle clientToken, uint desiredAccess, ref GenericMapping mapping,
+        byte[] privilegeSet, ref uint privilegeSetLength, out uint grantedAccess, out bool accessStatus);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    /// <summary>
+    /// Checks whether <paramref name="clientToken"/> (an impersonation token; Identification level
+    /// suffices) is granted all of <paramref name="desiredAccess"/> by the security descriptor of the
+    /// object behind <paramref name="handle"/> (opened with READ_CONTROL). Evaluates DACL, integrity
+    /// label and restricting SIDs like a real open. Returns 0 or a Win32 error code.
+    /// </summary>
+    public static int CheckAccess(SafeFileHandle handle, SafeAccessTokenHandle clientToken, uint desiredAccess)
+    {
+        var error = GetSecurityInfo(handle, SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+            IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out var securityDescriptor);
+        if (error != 0)
+        {
+            return (int)error;
+        }
+        try
+        {
+            var mapping = new GenericMapping { Read = 0x120089, Write = 0x120116, Execute = 0x1200A0, All = 0x1F01FF };
+            var privileges = new byte[256];
+            var length = (uint)privileges.Length;
+            if (!AccessCheck(securityDescriptor, clientToken, desiredAccess, ref mapping, privileges, ref length,
+                    out var granted, out var allowed))
+            {
+                return Marshal.GetLastWin32Error();
+            }
+            return allowed && (granted & desiredAccess) == desiredAccess ? 0 : ERROR_ACCESS_DENIED;
+        }
+        finally
+        {
+            LocalFree(securityDescriptor);
+        }
     }
 
     public static string DescribeError(int error) => $"{new Win32Exception(error).Message} (0x{error:X8})";

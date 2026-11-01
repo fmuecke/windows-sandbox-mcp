@@ -131,7 +131,7 @@ public sealed class EndToEndTests : IDisposable
     public async Task ExecTimeoutKillsWsbClientAndReportsTimedOut()
     {
         await StartHostAsync();
-        await using var pipe = await ConnectAsync(TokenImpersonationLevel.Impersonation);
+        await using var pipe = await ConnectAsync(TokenImpersonationLevel.Identification);
         var (writer, reader) = Wrap(pipe);
         await Rpc(writer, reader, CallJson(1, "sandbox_start", new JsonObject()));
         var watch = Stopwatch.StartNew();
@@ -141,10 +141,10 @@ public sealed class EndToEndTests : IDisposable
     }
 
     [Test]
-    public async Task RejectsClientWithoutImpersonationLevel()
+    public async Task RejectsAnonymousClient()
     {
         await StartHostAsync();
-        await using var pipe = await ConnectAsync(TokenImpersonationLevel.Identification);
+        await using var pipe = await ConnectAsync(TokenImpersonationLevel.Anonymous);
         var (writer, reader) = Wrap(pipe);
         try
         {
@@ -166,7 +166,7 @@ public sealed class EndToEndTests : IDisposable
         Assert.Equal(null, line, "no response to rejected client");
 
         // The broker keeps serving a proper client afterwards.
-        await using var good = await ConnectAsync(TokenImpersonationLevel.Impersonation);
+        await using var good = await ConnectAsync(TokenImpersonationLevel.Identification);
         var (w2, r2) = Wrap(good);
         Assert.True((await Rpc(w2, r2, """{"jsonrpc":"2.0","id":1,"method":"ping"}"""))["result"] is JsonObject, "ping");
     }

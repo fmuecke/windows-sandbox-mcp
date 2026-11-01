@@ -11,9 +11,10 @@ public static class Proxy
 {
     public static async Task<int> RunAsync(string pipeName, int connectTimeoutMs, CancellationToken cancellationToken)
     {
-        // Impersonation level lets the broker check folder access as this account.
+        // Identification lets the broker identify this account and run access checks for it,
+        // but not act as it (a non-elevated broker would be capped at Identification anyway).
         await using var pipe = new NamedPipeClientStream(
-            ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Impersonation);
+            ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
         try
         {
             await pipe.ConnectAsync(connectTimeoutMs, cancellationToken).ConfigureAwait(false);

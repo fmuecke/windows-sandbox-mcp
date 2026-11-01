@@ -1,4 +1,7 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
@@ -78,12 +81,34 @@ internal sealed class WorkDir : IDisposable
     }
 }
 
-/// <summary>Client identity for in-process tests: runs as the current user.</summary>
+/// <summary>
+/// Client identity for in-process tests: the current user, with an Identification-level token
+/// like the one a non-elevated broker gets from the pipe.
+/// </summary>
 internal sealed class SelfClient : IClientIdentity
 {
+    private const uint TokenQuery = 0x0008;
+    private const int SecurityIdentification = 1;
+    private const int TokenImpersonation = 2;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool DuplicateTokenEx(SafeAccessTokenHandle existing, uint access, IntPtr attributes,
+        int level, int type, out SafeAccessTokenHandle duplicate);
+
+    public SelfClient()
+    {
+        using var self = WindowsIdentity.GetCurrent();
+        if (!DuplicateTokenEx(self.AccessToken, TokenQuery, IntPtr.Zero, SecurityIdentification, TokenImpersonation,
+                out var token))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        Token = token;
+    }
+
     public string Name => WindowsIdentity.GetCurrent().Name;
 
-    public void RunAsClient(Action action) => action();
+    public SafeAccessTokenHandle Token { get; }
 }
 
 /// <summary>Controllable wall clock; timestamps/delays stay real.</summary>

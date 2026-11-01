@@ -50,8 +50,10 @@ Agent host ──stdio(MCP)──> wsb-mcp proxy ──named pipe──> wsb-mcp
   agent SID (defence in depth beyond the ACL); otherwise disconnect.
 - One client connection at a time. The single pipe instance is reused
   (disconnect + wait) so there is no window in which the name can be squatted.
-- The client must connect with `Impersonation` level; `Identification` or lower
-  is rejected (path checks need to open files as the client).
+- The proxy connects with `Identification` level; `Anonymous` is rejected. A
+  non-elevated broker (no `SeImpersonatePrivilege`) receives at most an
+  Identification-level token for another account anyway, so it can identify the
+  client and run access checks for it (rule 4) but never act as it.
 
 ## Broker configuration (host-only, never exposed via tools)
 
@@ -103,8 +105,12 @@ Validation, performed for each host path, in this order:
    name is used; it may keep 8.3 components, which can only cause rejections.
 3. Final path must be equal to or below the final path of `allowedRoot`
    (case-insensitive, separator-aware prefix comparison).
-4. **Impersonate the pipe client** and check access on the final path:
-   read+list for input; read+write+create for output. Revert impersonation.
+4. Check the **pipe client's** access: `AccessCheck` with the client's
+   Identification token against the security descriptor (owner, group, DACL,
+   integrity label) read from the rule 2 handle (`READ_CONTROL`): list+read
+   attributes for input; additionally add-file+add-subdirectory for output.
+   Only the directory itself is checked (traverse checking is bypassed for
+   standard accounts).
 5. Keep the handle open until `wsb share` returned, so the directory cannot be
    swapped for a junction between check and share (TOCTOU).
 
@@ -222,8 +228,10 @@ log file outside `allowedRoot`, so the agent cannot tamper with it.
   2026-11-01** (throwaway probe). The restricted agent opened a pipe created by the real
   user, with an ACL allowing only the broker user and the agent SID and denying
   network logons. The broker identified the client as `AgentSandbox` and
-  impersonated it successfully. The proxy connects with `Impersonation` level
-  so the broker can run path access checks as the client.
+  impersonated it successfully. **Correction (first real run, 2026-11-01):** the
+  probe did not check the token level. The non-elevated broker only gets an
+  `Identification` token, so opening files as the client is impossible; rule 4
+  uses `AccessCheck` instead and the proxy requests only `Identification`.
 - **Q2** Exec timeout: report only (`timedOut: true`); guest keeps running.
 - **Q3** Proxy disconnect stops the guest. (Narrowest choice; may be relaxed later.)
 - **Q4** Broker does not capture stdout/stderr; the agent redirects to files.
@@ -276,6 +284,6 @@ log file outside `allowedRoot`, so the agent cannot tamper with it.
    the broker user but not by the agent → the guest must not be able to list it.~~
    Passed (links are resolved in the guest).
 
-Steps 4 (except cross-account rule 4), 5 (Identification-level rejection) and 6
+Steps 4 (except cross-account rule 4), 5 (anonymous rejection) and 6
 (disconnect stop, idle timeout) are covered by `tests/WsbMcp.Tests` against a
 fake `wsb.exe`. Cross-account behaviour still needs a real run.

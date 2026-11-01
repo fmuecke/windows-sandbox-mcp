@@ -10,13 +10,13 @@ public enum DirectoryAccess
     ReadWrite,
 }
 
-/// <summary>The connected (untrusted) client, used to run access checks under its identity.</summary>
+/// <summary>The connected (untrusted) client, used to run access checks for its account.</summary>
 public interface IClientIdentity
 {
     string Name { get; }
 
-    /// <summary>Runs <paramref name="action"/> while impersonating the client.</summary>
-    void RunAsClient(Action action);
+    /// <summary>Impersonation token of the client (Identification level suffices), with TOKEN_QUERY.</summary>
+    SafeAccessTokenHandle Token { get; }
 }
 
 /// <summary>
@@ -87,8 +87,9 @@ public sealed partial class PathValidator
 
         // Rule 2: open without FILE_SHARE_DELETE and resolve the final path. The handle needs a
         // data access right (list): attribute-only handles do not take part in share-mode checks
-        // and would not block rename/delete of the directory.
-        var handle = Native.TryOpen(path, Native.FILE_LIST_DIRECTORY | Native.FILE_READ_ATTRIBUTES | Native.SYNCHRONIZE,
+        // and would not block rename/delete of the directory. READ_CONTROL is for the rule 4 check.
+        var handle = Native.TryOpen(path,
+            Native.FILE_LIST_DIRECTORY | Native.FILE_READ_ATTRIBUTES | Native.READ_CONTROL | Native.SYNCHRONIZE,
             Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, out var openError);
         if (handle is null)
         {
@@ -125,18 +126,14 @@ public sealed partial class PathValidator
                     $"{parameter}: '{path}' resolves to '{finalPath}', which is outside the allowed root '{Root}' (rule 3).");
             }
 
-            // Rule 4: the client itself must have the required access.
+            // Rule 4: the client itself must have the required access. AccessCheck against the
+            // pinned directory's security descriptor works with an Identification-level token.
             var desired = Native.FILE_LIST_DIRECTORY | Native.FILE_READ_ATTRIBUTES | Native.SYNCHRONIZE;
             if (access == DirectoryAccess.ReadWrite)
             {
                 desired |= Native.FILE_ADD_FILE | Native.FILE_ADD_SUBDIRECTORY;
             }
-            var accessError = 0;
-            client.RunAsClient(() =>
-            {
-                using var probe = Native.TryOpen(finalPath, desired,
-                    Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE | Native.FILE_SHARE_DELETE, out accessError);
-            });
+            var accessError = Native.CheckAccess(handle, client.Token, desired);
             if (accessError != 0)
             {
                 var what = access == DirectoryAccess.ReadWrite ? "read/write" : "read";

@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using Microsoft.Win32.SafeHandles;
 using System.Runtime.ExceptionServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -43,7 +44,7 @@ public sealed class PipeHost(
         while (true)
         {
             await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-            var client = new PipeClientIdentity(server);
+            using var client = new PipeClientIdentity(server);
             var verified = false;
             try
             {
@@ -93,62 +94,60 @@ public sealed class PipeHost(
     }
 }
 
-internal sealed class PipeClientIdentity(NamedPipeServerStream pipe) : IClientIdentity
+internal sealed class PipeClientIdentity(NamedPipeServerStream pipe) : IClientIdentity, IDisposable
 {
+    private WindowsIdentity? _identity;
+
     public string Name { get; private set; } = "(unknown)";
 
-    public void RunAsClient(Action action)
+    public SafeAccessTokenHandle Token =>
+        _identity?.AccessToken ?? throw new InvalidOperationException("Client not verified.");
+
+    /// <summary>
+    /// Accepts only the configured agent account. Identification level is enough (and is all a
+    /// non-elevated broker gets): the token is only used for <see cref="Native.CheckAccess"/>.
+    /// </summary>
+    public bool Verify(SecurityIdentifier expected, out string reason)
     {
+        WindowsIdentity? identity = null;
         ExceptionDispatchInfo? failure = null;
         pipe.RunAsClient(() =>
         {
             try
             {
-                action();
+                identity = WindowsIdentity.GetCurrent(ifImpersonating: true);
             }
             catch (Exception ex)
             {
                 failure = ExceptionDispatchInfo.Capture(ex);
             }
         });
-        failure?.Throw();
-    }
-
-    /// <summary>Accepts only the configured agent account connecting with impersonation level.</summary>
-    public bool Verify(SecurityIdentifier expected, out string reason)
-    {
-        SecurityIdentifier? sid = null;
-        var level = TokenImpersonationLevel.None;
-        try
+        if (failure is not null || identity is null)
         {
-            RunAsClient(() =>
-            {
-                using var identity = WindowsIdentity.GetCurrent(ifImpersonating: true);
-                if (identity is not null)
-                {
-                    sid = identity.User;
-                    level = identity.ImpersonationLevel;
-                    Name = identity.Name;
-                }
-            });
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            reason = $"cannot identify client: {ex.Message}";
+            reason = $"cannot identify client: {failure?.SourceException.Message ?? "no client token"}";
             return false;
         }
 
+        var sid = identity.User;
+        var level = identity.ImpersonationLevel;
+        Name = identity.Name;
         if (sid is null || !sid.Equals(expected))
         {
+            identity.Dispose();
             reason = $"client SID {sid?.Value ?? "(none)"} is not the configured agent {expected.Value}";
             return false;
         }
-        if (level is not (TokenImpersonationLevel.Impersonation or TokenImpersonationLevel.Delegation))
+        if (level is not (TokenImpersonationLevel.Identification or TokenImpersonationLevel.Impersonation
+            or TokenImpersonationLevel.Delegation))
         {
-            reason = $"client allowed impersonation level {level}; 'Impersonation' is required for access checks";
+            identity.Dispose();
+            reason = $"client impersonation level {level}; at least 'Identification' is required";
             return false;
         }
+        _identity = identity;
         reason = string.Empty;
         return true;
     }
+
+    public void Dispose() => _identity?.Dispose();
 }
