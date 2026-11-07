@@ -45,3 +45,8 @@ following through the broker:
 ## Supported versions
 
 Only the latest release and `master` get fixes.
+
+Releases are self-contained: they bundle the .NET runtime, so Microsoft
+Update does **not** patch it. When .NET publishes a security update, a patch
+release with the updated runtime follows; Dependabot proposes the SDK update.
+Keep wsb-mcp current (`winget upgrade fmuecke.WsbMcp`) to receive these fixes.

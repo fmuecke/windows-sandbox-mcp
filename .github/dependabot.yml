@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Florian Mücke
+# SPDX-License-Identifier: MIT
+# Releases bundle the .NET runtime (self-contained), so .NET security fixes reach users only
+# through a new wsb-mcp release. Dependabot proposes each SDK update to global.json; merge it
+# and tag a patch release. It also keeps the commit-pinned GitHub Actions current.
+version: 2
+updates:
+  - package-ecosystem: dotnet-sdk
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(.NET)"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps(actions)"
