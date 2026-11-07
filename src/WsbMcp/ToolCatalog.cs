@@ -30,16 +30,28 @@ public sealed class ToolCatalog
         "Guest commands run elevated; the guest has no network.";
 
     public ToolCatalog(string allowedRoot, int maxExecTimeoutSeconds, TimeSpan idleTimeout)
+        : this($"'{allowedRoot}'", maxExecTimeoutSeconds,
+            $"{((int)idleTimeout.TotalMinutes).ToString(CultureInfo.InvariantCulture)} minutes")
     {
-        var idleMinutes = ((int)idleTimeout.TotalMinutes).ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Same tools, served by the proxy while no broker is reachable. The limits are only known to
+    /// the broker, so the texts stay generic and the timeout maximum is the configurable upper bound.
+    /// </summary>
+    public static ToolCatalog Offline() =>
+        new("the folder configured on the host", BrokerConfig.MaxExecTimeoutLimitSeconds, "an idle period");
+
+    private ToolCatalog(string allowedRoot, int maxExecTimeoutSeconds, string idlePeriod)
+    {
         Definitions = new JsonArray(
             Tool(Start,
                 "Start a fresh, disposable Windows Sandbox guest with networking disabled. Optionally map a host " +
                 $"input folder read-only at {SandboxManager.InputGuestPath} and a host output folder writable at " +
-                $"{SandboxManager.OutputGuestPath}. Host folders must be below '{allowedRoot}' and accessible to you " +
+                $"{SandboxManager.OutputGuestPath}. Host folders must be below {allowedRoot} and accessible to you " +
                 "(read for input, read/write for output). If both are the same folder it is mapped once, writable, at " +
                 $"{SandboxManager.OutputGuestPath}. Host changes are visible to the guest live. Only one sandbox can run; " +
-                $"it is stopped when you disconnect or after {idleMinutes} minutes without tool calls. Fails if any " +
+                $"it is stopped when you disconnect or after {idlePeriod} without tool calls. Fails if any " +
                 "Windows Sandbox is already running on the host.",
                 new JsonObject
                 {

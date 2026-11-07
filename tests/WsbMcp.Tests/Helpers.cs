@@ -136,6 +136,9 @@ internal sealed class ScriptedWsb : IWsbCli
     public bool ShareAlwaysFails { get; set; }
     public Func<string[], WsbResult>? Exec { get; set; }
 
+    /// <summary>Id of the (single) sandbox this double starts or lists.</summary>
+    public string Id { get; set; } = "id-1";
+
     public Task<WsbResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var args = arguments.ToArray();
@@ -143,7 +146,7 @@ internal sealed class ScriptedWsb : IWsbCli
         WsbResult result = args[0] switch
         {
             "list" => Ok(OtherSandboxRunning || Running
-                ? """{"WindowsSandboxEnvironments": [{"Id": "id-1"}]}"""
+                ? $$"""{"WindowsSandboxEnvironments": [{"Id": "{{Id}}"}]}"""
                 : """{"WindowsSandboxEnvironments": []}"""),
             "start" => Start(),
             "share" => Share(),
@@ -169,7 +172,7 @@ internal sealed class ScriptedWsb : IWsbCli
     private WsbResult Start()
     {
         Running = true;
-        return Ok("""{"Id": "id-1"}""");
+        return Ok($$"""{"Id": "{{Id}}"}""");
     }
 
     private WsbResult Share()
@@ -200,8 +203,29 @@ internal sealed class ScriptedWsb : IWsbCli
     public static WsbResult Ok(string output) => new(0, output, false);
 }
 
+/// <summary>In-memory guest record.</summary>
+internal sealed class MemoryGuestRecord : IGuestRecord
+{
+    public string? Value { get; set; }
+
+    public string? Read() => Value;
+
+    public void Write(string id) => Value = id;
+
+    public void Clear() => Value = null;
+}
+
 internal static class Fixtures
 {
+    /// <summary>
+    /// The wsb-mcp.exe that process-level tests start. CI points WSB_MCP_EXE at the published,
+    /// trimmed release exe, so the shipped binary is exercised, not only the test build.
+    /// </summary>
+    public static string WsbMcpExe =>
+        Environment.GetEnvironmentVariable("WSB_MCP_EXE") is { Length: > 0 } exe
+            ? exe
+            : Path.Combine(AppContext.BaseDirectory, "wsb-mcp.exe");
+
     public static readonly SandboxOptions FastOptions = new(TimeSpan.FromSeconds(2), 600, TimeSpan.FromMinutes(30))
     {
         RetryInterval = TimeSpan.FromMilliseconds(10),

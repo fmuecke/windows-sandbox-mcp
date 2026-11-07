@@ -93,7 +93,7 @@ public sealed class McpSession(
         {
             return method switch
             {
-                "initialize" => Result(id, Initialize(parameters)),
+                "initialize" => Result(id, InitializeResult(parameters)),
                 "ping" => Result(id, new JsonObject()),
                 "tools/list" => Result(id, new JsonObject { ["tools"] = catalog.Definitions.DeepClone() }),
                 "tools/call" => await CallToolAsync(id, parameters, cancellationToken).ConfigureAwait(false),
@@ -106,7 +106,7 @@ public sealed class McpSession(
         }
     }
 
-    private static JsonObject Initialize(JsonObject? parameters)
+    internal static JsonObject InitializeResult(JsonObject? parameters)
     {
         var requested = parameters?["protocolVersion"] is JsonValue v && v.GetValueKind() == JsonValueKind.String
             ? v.GetValue<string>()

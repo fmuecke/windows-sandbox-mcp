@@ -1,0 +1,31 @@
+# Template: CI fills in {{VERSION}}.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: fmuecke.WsbMcp
+PackageVersion: {{VERSION}}
+PackageLocale: en-US
+Publisher: Florian Mücke
+PublisherUrl: https://github.com/fmuecke
+PublisherSupportUrl: https://github.com/fmuecke/windows-sandbox-mcp/issues
+Author: Florian Mücke
+PackageName: Windows Sandbox MCP
+PackageUrl: https://github.com/fmuecke/windows-sandbox-mcp
+License: MIT
+LicenseUrl: https://github.com/fmuecke/windows-sandbox-mcp/blob/master/LICENSE
+ShortDescription: MCP server that lets a restricted AI agent run risky commands in a disposable, offline Windows Sandbox.
+Description: |-
+  wsb-mcp lets an AI agent that runs under a restricted Windows account start, query and stop a
+  fresh Windows Sandbox guest (networking disabled) and run commands in it, without access to
+  anything else on the host. After installing, run 'wsb-mcp setup --agent <account> --root <folder>'
+  once as the interactive user (not elevated). Requires Windows Sandbox to be enabled.
+Moniker: wsb-mcp
+Tags:
+  - mcp
+  - model-context-protocol
+  - windows-sandbox
+  - sandbox
+  - ai-agents
+  - claude
+  - security
+ReleaseNotesUrl: https://github.com/fmuecke/windows-sandbox-mcp/releases/tag/v{{VERSION}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

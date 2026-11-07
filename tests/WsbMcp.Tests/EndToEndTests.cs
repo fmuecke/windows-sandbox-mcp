@@ -44,7 +44,7 @@ public sealed class EndToEndTests : IDisposable
         _work.Dispose();
     }
 
-    private static string ToolPath(string name) => Path.Combine(AppContext.BaseDirectory, name);
+    private static string ToolPath(string name) => name == "wsb-mcp.exe" ? Fixtures.WsbMcpExe : Path.Combine(AppContext.BaseDirectory, name);
 
     private async Task StartHostAsync()
     {

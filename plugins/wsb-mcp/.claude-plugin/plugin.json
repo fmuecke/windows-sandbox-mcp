@@ -1,0 +1,13 @@
+{
+  "name": "wsb-mcp",
+  "version": "0.1.0",
+  "description": "Run risky commands in a disposable, offline Windows Sandbox: MCP tools plus a skill for using them.",
+  "author": {
+    "name": "Florian Mücke",
+    "url": "https://github.com/fmuecke"
+  },
+  "homepage": "https://github.com/fmuecke/windows-sandbox-mcp#readme",
+  "repository": "https://github.com/fmuecke/windows-sandbox-mcp",
+  "license": "MIT",
+  "keywords": ["windows", "sandbox", "windows-sandbox", "testing", "security", "mcp"]
+}

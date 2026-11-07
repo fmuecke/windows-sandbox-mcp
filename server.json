@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.fmuecke/windows-sandbox-mcp",
+  "title": "Windows Sandbox MCP",
+  "description": "Run risky commands in a disposable, offline Windows Sandbox (Windows only, needs a one-time setup).",
+  "repository": {
+    "url": "https://github.com/fmuecke/windows-sandbox-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/fmuecke/windows-sandbox-mcp#readme",
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/fmuecke/windows-sandbox-mcp/releases/download/v0.0.0/wsb-mcp-0.0.0-win-x64.mcpb",
+      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

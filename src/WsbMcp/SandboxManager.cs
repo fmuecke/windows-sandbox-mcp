@@ -24,9 +24,51 @@ public sealed record SandboxOptions(
 }
 
 /// <summary>Owns at most one Windows Sandbox guest and serializes all operations on it.</summary>
-public sealed class SandboxManager(
-    IWsbCli wsb, PathValidator validator, SandboxOptions options, IBrokerLog log, TimeProvider time)
+/// <summary>Persists the id of the guest the broker started, for crash recovery.</summary>
+public interface IGuestRecord
 {
+    string? Read();
+
+    void Write(string id);
+
+    void Clear();
+}
+
+public sealed class NullGuestRecord : IGuestRecord
+{
+    public static readonly NullGuestRecord Instance = new();
+
+    public string? Read() => null;
+
+    public void Write(string id)
+    {
+    }
+
+    public void Clear()
+    {
+    }
+}
+
+/// <summary>Guest id in a host-only file (the broker's %LOCALAPPDATA%, outside allowedRoot).</summary>
+public sealed class FileGuestRecord(string path) : IGuestRecord
+{
+    public string? Read() => File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+
+    public void Write(string id)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, id);
+    }
+
+    public void Clear() => File.Delete(path);
+}
+
+public sealed class SandboxManager(
+    IWsbCli wsb, PathValidator validator, SandboxOptions options, IBrokerLog log, TimeProvider time,
+    IGuestRecord? guestRecord = null)
+{
+    private readonly IGuestRecord _record = guestRecord ?? NullGuestRecord.Instance;
+
     public const string InputGuestPath = @"C:\SandboxIn";
     public const string OutputGuestPath = @"C:\SandboxOut";
 
@@ -109,6 +151,8 @@ public sealed class SandboxManager(
 
                 try
                 {
+                    // Inside the try: if recording fails, the guest is stopped instead of left untracked.
+                    _record.Write(id);
                     if (input is not null)
                     {
                         await ShareAsync(id, input.FinalPath, InputGuestPath, writable: false, startTimestamp, cancellationToken)
@@ -231,6 +275,7 @@ public sealed class SandboxManager(
                 if (!ids.Contains(_guest.Id, StringComparer.OrdinalIgnoreCase))
                 {
                     log.Write("guest.vanished", new JsonObject { ["id"] = _guest.Id });
+                    _record.Clear();
                     result["note"] = $"Sandbox {_guest.Id} is no longer running (stopped outside the broker).";
                     _guest = null;
                 }
@@ -275,6 +320,33 @@ public sealed class SandboxManager(
         }
     }
 
+    /// <summary>
+    /// At broker start: stops the guest a previous broker run started and could not stop (crash,
+    /// killed task). Only the recorded id is ever touched (never a guest someone else started).
+    /// </summary>
+    public async Task RecoverAsync(CancellationToken cancellationToken)
+    {
+        var id = _record.Read();
+        if (id is null)
+        {
+            return;
+        }
+        if (!Guid.TryParse(id, out _))
+        {
+            log.Write("guest.record_invalid", new JsonObject { ["content"] = id.Length > 64 ? id[..64] : id });
+            _record.Clear();
+            return;
+        }
+        if ((await ListAsync(cancellationToken).ConfigureAwait(false)).Contains(id, StringComparer.OrdinalIgnoreCase))
+        {
+            await StopGuestQuietlyAsync(id, "left over from a previous broker run").ConfigureAwait(false);
+        }
+        else
+        {
+            _record.Clear();
+        }
+    }
+
     /// <summary>Stops the guest if no call is in progress and the idle timeout has elapsed.</summary>
     public async Task StopIfIdleAsync()
     {
@@ -313,6 +385,7 @@ public sealed class SandboxManager(
             }
         }
         _guest = null;
+        _record.Clear();
         var total = Seconds(time.GetElapsedTime(guest.StartedTimestamp));
         log.Write("guest.stopped", new JsonObject { ["id"] = guest.Id, ["reason"] = reason, ["totalSeconds"] = total });
         return new JsonObject { ["stopped"] = true, ["totalSeconds"] = total };
@@ -324,6 +397,10 @@ public sealed class SandboxManager(
         {
             var stop = await wsb.RunAsync(["stop", "--id", id], options.CliTimeout, CancellationToken.None).ConfigureAwait(false);
             log.Write("guest.stopped", new JsonObject { ["id"] = id, ["reason"] = reason, ["exitCode"] = stop.ExitCode });
+            if (!stop.TimedOut && stop.ExitCode == 0)
+            {
+                _record.Clear();
+            }
         }
         catch (Exception ex) when (ex is ToolException or IOException or InvalidOperationException)
         {

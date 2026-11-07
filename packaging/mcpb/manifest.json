@@ -1,0 +1,38 @@
+{
+  "manifest_version": "0.2",
+  "name": "wsb-mcp",
+  "display_name": "Windows Sandbox MCP",
+  "version": "0.0.0",
+  "description": "Run risky commands in a disposable, offline Windows Sandbox guest.",
+  "long_description": "Lets an AI agent running under a restricted Windows account start, query and stop a fresh Windows Sandbox (networking disabled) and run commands in it, with optional read-only input and writable output folders. This bundle contains the client side (proxy). It needs the broker set up once on the same machine by the interactive user: 'wsb-mcp setup --agent <account> --root <folder>' (see the README). Requires Windows 11 24H2 or later with Windows Sandbox enabled.",
+  "author": {
+    "name": "Florian Mücke",
+    "url": "https://github.com/fmuecke"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fmuecke/windows-sandbox-mcp"
+  },
+  "homepage": "https://github.com/fmuecke/windows-sandbox-mcp",
+  "documentation": "https://github.com/fmuecke/windows-sandbox-mcp#readme",
+  "support": "https://github.com/fmuecke/windows-sandbox-mcp/issues",
+  "license": "MIT",
+  "keywords": ["windows", "sandbox", "windows-sandbox", "security", "testing"],
+  "server": {
+    "type": "binary",
+    "entry_point": "wsb-mcp.exe",
+    "mcp_config": {
+      "command": "${__dirname}/wsb-mcp.exe",
+      "args": ["proxy"]
+    }
+  },
+  "tools": [
+    { "name": "sandbox_start", "description": "Start a fresh, offline Windows Sandbox guest, optionally mapping an input and an output folder." },
+    { "name": "sandbox_exec", "description": "Run a command line in the guest and return its exit code." },
+    { "name": "sandbox_status", "description": "Report whether the sandbox is running and which folders are mapped." },
+    { "name": "sandbox_stop", "description": "Stop and discard the sandbox guest." }
+  ],
+  "compatibility": {
+    "platforms": ["win32"]
+  }
+}

@@ -76,12 +76,12 @@ internal static class Runner
 {
     public static async Task<int> Main(string[] args)
     {
-        var filter = args.FirstOrDefault();
+        // Each argument is a name filter (substring); a test runs if it matches any of them.
         var tests = typeof(Runner).Assembly.GetTypes()
             .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.GetCustomAttribute<TestAttribute>() is not null)
                 .Select(m => (Type: t, Method: m)))
-            .Where(x => filter is null || $"{x.Type.Name}.{x.Method.Name}".Contains(filter, StringComparison.OrdinalIgnoreCase))
+            .Where(x => args.Length == 0 || args.Any(f => $"{x.Type.Name}.{x.Method.Name}".Contains(f, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(x => x.Type.Name).ThenBy(x => x.Method.Name)
             .ToList();
 

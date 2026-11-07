@@ -3,6 +3,7 @@
 // https://github.com/fmuecke/windows-sandbox-mcp
 using System.Security.Principal;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace WsbMcp;
@@ -10,6 +11,17 @@ namespace WsbMcp;
 /// <summary>Host-only broker configuration. Never exposed to or changeable by the client.</summary>
 public sealed partial class BrokerConfig
 {
+    public const string DefaultPipeName = "wsb-mcp";
+    public const int MaxExecTimeoutLimitSeconds = 24 * 3600;
+
+    /// <summary>The broker user's state directory: config, log and the guest record.</summary>
+    public static string StateDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "wsb-mcp");
+
+    public static string DefaultConfigPath => Path.Combine(StateDirectory, "config.json");
+
+    public static string GuestRecordPath => Path.Combine(StateDirectory, "guest.id");
+
     public required string AgentAccount { get; init; }
     public required SecurityIdentifier AgentSid { get; init; }
     public required string AllowedRoot { get; init; }
@@ -20,7 +32,7 @@ public sealed partial class BrokerConfig
     public required string LogPath { get; init; }
     public required string WsbPath { get; init; }
 
-    private sealed class FileModel
+    internal sealed class FileModel
     {
         public string? AgentAccount { get; set; }
         public string? AllowedRoot { get; set; }
@@ -38,13 +50,8 @@ public sealed partial class BrokerConfig
         FileModel model;
         try
         {
-            model = JsonSerializer.Deserialize<FileModel>(File.ReadAllText(configFullPath), new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                ReadCommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true,
-                UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
-            }) ?? throw new InvalidOperationException("Configuration is empty.");
+            model = JsonSerializer.Deserialize(File.ReadAllText(configFullPath), ConfigJsonContext.Default.FileModel)
+                ?? throw new InvalidOperationException("Configuration is empty.");
         }
         catch (JsonException ex)
         {
@@ -69,7 +76,7 @@ public sealed partial class BrokerConfig
         var root = PathValidator.ResolveFinalDirectory(
             Environment.ExpandEnvironmentVariables(Require(model.AllowedRoot, "allowedRoot")));
 
-        var pipeName = model.PipeName ?? "wsb-mcp";
+        var pipeName = model.PipeName ?? DefaultPipeName;
         if (!PipeNamePattern().IsMatch(pipeName))
         {
             throw new InvalidOperationException("pipeName may only contain letters, digits, '.', '_' and '-' (max 64).");
@@ -98,7 +105,7 @@ public sealed partial class BrokerConfig
             AllowedRoot = root,
             PipeName = pipeName,
             IdleTimeout = TimeSpan.FromMinutes(Range(model.IdleTimeoutMinutes ?? 30, 1, 24 * 60, "idleTimeoutMinutes")),
-            MaxExecTimeoutSeconds = Range(model.MaxExecTimeoutSeconds ?? 1800, 1, 24 * 3600, "maxExecTimeoutSeconds"),
+            MaxExecTimeoutSeconds = Range(model.MaxExecTimeoutSeconds ?? 1800, 1, MaxExecTimeoutLimitSeconds, "maxExecTimeoutSeconds"),
             StartupTimeout = TimeSpan.FromSeconds(Range(model.StartupTimeoutSeconds ?? 120, 10, 600, "startupTimeoutSeconds")),
             LogPath = logPath,
             WsbPath = wsbPath,
@@ -122,5 +129,14 @@ public sealed partial class BrokerConfig
         value < min || value > max ? throw new InvalidOperationException($"'{name}' must be between {min} and {max}.") : value;
 
     [GeneratedRegex("^[A-Za-z0-9._-]{1,64}$")]
-    private static partial Regex PipeNamePattern();
+    internal static partial Regex PipeNamePattern();
 }
+
+/// <summary>Source-generated (trim-safe) JSON for the configuration file.</summary>
+[JsonSourceGenerationOptions(
+    PropertyNameCaseInsensitive = true,
+    ReadCommentHandling = JsonCommentHandling.Skip,
+    AllowTrailingCommas = true,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+[JsonSerializable(typeof(BrokerConfig.FileModel))]
+internal sealed partial class ConfigJsonContext : JsonSerializerContext;

@@ -209,6 +209,172 @@ Returns `{ stopped, totalSeconds }`.
 Broker logs every tool call (tool, arguments, result, duration) to a host-only
 log file outside `allowedRoot`, so the agent cannot tamper with it.
 
+## Setup and distribution (v1.1)
+
+Goal: three steps from nothing to working tools, each run by the right account:
+
+1. As admin: `winget install fmuecke.WsbMcp` (machine scope).
+2. As you: `wsb-mcp setup --agent AgentSandbox --root C:\AgentSandbox`.
+3. As the agent, in Claude Code: `/plugin marketplace add fmuecke/windows-sandbox-mcp`
+   and `/plugin install wsb-mcp@windows-sandbox-mcp`. Alternatively, run
+   `claude mcp add` with the command that `setup` prints.
+
+### Commands
+
+| Command | Run as | Does |
+|---|---|---|
+| `serve [--config <path>]` | you | As now; the config defaults to `%LOCALAPPDATA%\wsb-mcp\config.json`. |
+| `setup --agent <account> --root <dir> [--pipe <name>] [--no-autostart] [--force]` | you, **not elevated** | Preflight checks, then writes the config, registers and starts the logon task, waits for the pipe and prints the Claude-side steps. It refuses an existing config without `--force`. |
+| `start` / `stop` | you | Start the logon task now / stop the broker gracefully. The broker stops the guest first, and `stop` waits up to 60 s. |
+| `uninstall [--keep-config]` | you | `stop`, then delete the task, the config and the log. The program itself is removed with `winget uninstall`. |
+| `diag` | you or the agent | Checks each link of the chain and prints OK/FAIL with a fix for each. Exits 1 if anything fails. |
+| `proxy [--pipe <name>]` | the agent (MCP host) | See "Proxy" below. |
+
+`setup` refuses to run elevated. The task and config must belong to the
+interactive user. With over-the-shoulder elevation, an elevated shell is a
+different account.
+
+Preflight checks done by `setup` and `diag`:
+- `wsb --version` works. If not, they print the `Enable-WindowsOptionalFeature`
+  command.
+- The executable is in a **safe location** (rule below).
+- The agent account exists and differs from the current user.
+- `--root` exists, and the exe and config are outside it.
+- The agent can probably run the exe: the exe's DACL grants read and execute
+  to the agent SID or to a group such as Users. This is a warning only;
+  `diag` run as the agent checks it for real.
+
+### Safe-location rule (new, enforced by `serve` and `setup`)
+
+"Trusted" below means SYSTEM, Administrators, TrustedInstaller or the broker
+user. The **owner** of every object checked must be trusted, because an owner
+can always rewrite the DACL; a folder the agent created is therefore rejected
+even with a tight DACL. Inherit-only ACEs (for example `CREATOR OWNER` in
+Program Files) are ignored, because they don't apply to the object itself.
+Deny ACEs are not subtracted, which can only cause false rejections. These ACL
+entries must not grant any other SID the rights listed:
+
+- **The resolved executable file:** `WriteData`, `AppendData`,
+  `WriteExtendedAttributes`, `WriteAttributes`, `Delete`, `WriteDAC`,
+  `WriteOwner`.
+- **Its directory:** `AddFile` and `AddSubdirectory` (DLL planting next to
+  the exe), plus `DeleteChild`, `Delete`, `WriteDAC` and `WriteOwner`.
+- **Every ancestor up to the volume root:** `Delete`, `DeleteChild`,
+  `WriteDAC` and `WriteOwner`. Any of these would let a folder on the path be
+  renamed, replaced or re-permissioned. `AddFile` and `AddSubdirectory` are
+  allowed here, because `C:\` grants *Authenticated Users* the right to create
+  folders. A new folder can't affect an existing path. This replaces "exe not inside allowedRoot" for the exe, and
+also catches a hand-made `C:\Tools` folder that inherits the `C:\` ACL.
+`C:\Program Files\…` and `C:\Program Files\WinGet\Packages\…` pass by default.
+
+### Logon task
+
+- **Task:** `\wsb-mcp\broker`, for the current user. Trigger: logon of that
+  user. Principal: `InteractiveToken`, `LeastPrivilege`.
+- **Settings:** no time limit; ignore a new instance while one is running;
+  also runs on battery. Restart-on-failure (3× at 1-minute intervals) only
+  covers a failed *launch*. Task Scheduler does not restart a process that
+  exits with an error. A crashed broker comes back at the next logon or with
+  `wsb-mcp start`, and `diag` reports it as not running.
+- **Action:** `conhost.exe --headless "<resolved exe>" serve`, so no console
+  or Terminal window appears. The log is `broker.log`.
+- **Graceful stop:** the broker waits on a named event
+  `Local\wsb-mcp-<pipe>-stop`, whose ACL allows only the broker user and
+  SYSTEM. `stop` signals the event; the broker then treats it like Ctrl+C,
+  and `stop` waits until the pipe is gone. `Local\` is the logon session's
+  namespace. An agent running in the same session could create the event
+  first, so the broker **refuses to start** if the event already exists,
+  rather than use an event someone else controls. The worst case is a denial
+  of service. Ending the task kills the process without stopping the guest,
+  so `stop` is the only documented way.
+- **Crash recovery:** the broker records the id of the guest it started in
+  `%LOCALAPPDATA%\wsb-mcp\guest.id` and deletes the file when the guest is
+  stopped. At startup, if the recorded id is still in `wsb list`, it stops
+  that guest. That is still a guest it started itself, so the rule in
+  "Lifecycle guarantees" holds.
+- **Upgrade:** the running exe is locked. The documented upgrade sequence is
+  `wsb-mcp stop`, then `winget upgrade`, then `wsb-mcp start`.
+
+### Proxy
+
+- Line-based JSON-RPC, still with no access to anything the agent can't
+  reach itself. It tries to connect for 1 s.
+- **Online:** it forwards lines both ways, as now.
+- **Offline** (no broker): the proxy answers `initialize`, `ping` and
+  `tools/list` itself, with the same tool names and schemas and generic limit
+  texts. Each `tools/call` first retries the connection.
+  - If the broker is now there, the proxy replays the stored `initialize` and
+    `notifications/initialized`, discards the broker's reply to it, forwards
+    the call and switches to online.
+  - Otherwise it returns an `isError` result: "The wsb-mcp broker is not
+    running. Ask the user to run `wsb-mcp start` (or `wsb-mcp setup` if it was
+    never set up); `wsb-mcp diag` shows details."
+- **Broker lost while online:** the proxy answers every in-flight request with
+  the same error and switches to offline. The guest is stopped by the broker
+  as before.
+
+### Packaging
+
+- **Exe:** self-contained, single-file, trimmed `wsb-mcp.exe` for win-x64 and
+  win-arm64, so no .NET is needed on the machine. Config parsing moves to
+  source-generated JSON, so trimming is warning-free; the trim analyzers run
+  in every build.
+- **Release assets:** zips for both architectures, `wsb-mcp.mcpb` (x64,
+  binary server, `win32`, args `proxy`), `SHA256SUMS.txt` and provenance
+  attestations.
+- **MCP Registry:** `server.json` named
+  `io.github.fmuecke/windows-sandbox-mcp`, with an `mcpb` package that points
+  to the release asset and its SHA-256. The release workflow publishes it
+  with `mcp-publisher` and GitHub OIDC.
+- **winget:** `fmuecke.WsbMcp`, installer type `portable`, command
+  `wsb-mcp`, `Scope: machine`. The first version goes in through a manual pull
+  request to microsoft/winget-pkgs; later ones are automated (for example
+  wingetcreate with a token secret).
+- **Claude plugin:** `.claude-plugin/marketplace.json` at the repo root lists
+  `plugins/wsb-mcp`. Its `.mcp.json` runs `wsb-mcp proxy` via PATH, which is
+  fine because the proxy holds no privilege. It ships one skill, `wsb-mcp`:
+  the tool workflow, folder rules, output through files, limits, and what to
+  do when the offline hint appears. The `windows-sandbox-tests` skill is
+  deliberately not included: its framework runs `wsb.exe` directly, which the
+  restricted agent this plugin serves cannot do.
+
+  Under `strictKnownMarketplaces`, the admin must allow this marketplace.
+
+Every listing states: Windows 11 24H2 or later, Windows Sandbox enabled, and a
+separate agent account. Without `setup`, the tools only return the offline
+hint.
+
+### Validation status (2026-11-07)
+
+**Covered by tests** (`SetupTests`, `ProxyTests`):
+- the safe-location rule, both in unit tests and against the real ACLs of
+  `System32` and `Program Files`;
+- `serve` refusing an unsafe location;
+- the task XML;
+- stop-event creation, refusal and signaling;
+- crash recovery, which touches only the recorded GUID;
+- the offline proxy, reconnecting and losing the broker, including through
+  the exe;
+- pending responses after the client's input closes.
+
+**Validated on the real system (2026-11-07)** with the framework-dependent
+build in `C:\Program Files\wsb-mcp`:
+- `setup` registered the logon task, and the broker started from it through
+  `conhost --headless`, with no console window;
+- `diag` as the broker user: all 6 checks OK; as the agent: the broker
+  accepts the account;
+- `stop` and `start` against the task-started broker;
+- the real smoke test through the installed exe's new proxy: 19/19.
+
+**Not yet validated on a real system:**
+- the upgrade sequence;
+- the self-contained, trimmed build (CI only; NuGet is unreachable from the
+  development sandbox);
+- installing the plugin;
+- the formats of the MCPB manifest, `server.json` and the winget manifests,
+  which were written from memory. CI validates the MCPB manifest and the
+  plugin; registry and winget find out on publish.
+
 ## Out of scope (v1)
 
 - Exposing any WSB configuration to the agent.
@@ -224,7 +390,6 @@ log file outside `allowedRoot`, so the agent cannot tamper with it.
 - Standard-user `runAs`.
 - Provisioning helpers, e.g. copying VC++ debug runtime (vcredist debug) DLLs
   into the guest, mapping a host PowerShell 7 installation read-only.
-- Run broker as scheduled task at logon (service mode would lose `runAs: user`).
 
 ## Decisions
 

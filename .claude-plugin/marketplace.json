@@ -1,0 +1,20 @@
+{
+  "name": "windows-sandbox-mcp",
+  "owner": {
+    "name": "Florian Mücke",
+    "url": "https://github.com/fmuecke"
+  },
+  "metadata": {
+    "description": "Run risky commands in a disposable, offline Windows Sandbox from Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "wsb-mcp",
+      "source": "./plugins/wsb-mcp",
+      "description": "Windows Sandbox tools (start, exec, status, stop) plus a skill for using them. Needs 'winget install fmuecke.WsbMcp' and a one-time 'wsb-mcp setup' by the interactive user.",
+      "version": "0.1.0",
+      "category": "development",
+      "keywords": ["windows", "sandbox", "testing", "security", "mcp"]
+    }
+  ]
+}

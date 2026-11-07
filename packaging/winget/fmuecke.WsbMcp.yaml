@@ -1,0 +1,7 @@
+# Template: CI fills in {{VERSION}} and publishes the result as a release asset.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+PackageIdentifier: fmuecke.WsbMcp
+PackageVersion: {{VERSION}}
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

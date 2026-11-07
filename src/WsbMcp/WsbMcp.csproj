@@ -5,6 +5,21 @@
     <RootNamespace>WsbMcp</RootNamespace>
     <Version>0.1.0</Version>
   </PropertyGroup>
+  <!-- Releases are self-contained, single-file and trimmed (no .NET needed on the machine).
+       The analyzers need the ILLink package from NuGet, so they run in CI (GitHub sets CI=true)
+       and in release builds; there, trim/single-file problems fail the build. -->
+  <PropertyGroup Condition="'$(CI)' == 'true' or '$(RuntimeIdentifier)' != ''">
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+  </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="WsbMcp.Tests" />
   </ItemGroup>

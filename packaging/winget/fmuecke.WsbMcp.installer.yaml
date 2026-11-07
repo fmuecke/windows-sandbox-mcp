@@ -1,0 +1,24 @@
+# Template: CI fills in {{VERSION}}, {{SHA256_X64}} and {{SHA256_ARM64}}.
+# Machine scope only: the broker runs this exe with the user's rights, so it must live in a
+# folder only admins can write (C:\Program Files\WinGet\Packages). User scope would put it in
+# the user's profile, where the agent account cannot run it.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: fmuecke.WsbMcp
+PackageVersion: {{VERSION}}
+MinimumOSVersion: 10.0.26100.0
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: wsb-mcp.exe
+    PortableCommandAlias: wsb-mcp
+Scope: machine
+ReleaseDate: {{DATE}}
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/fmuecke/windows-sandbox-mcp/releases/download/v{{VERSION}}/wsb-mcp-{{VERSION}}-win-x64.zip
+    InstallerSha256: {{SHA256_X64}}
+  - Architecture: arm64
+    InstallerUrl: https://github.com/fmuecke/windows-sandbox-mcp/releases/download/v{{VERSION}}/wsb-mcp-{{VERSION}}-win-arm64.zip
+    InstallerSha256: {{SHA256_ARM64}}
+ManifestType: installer
+ManifestVersion: 1.6.0

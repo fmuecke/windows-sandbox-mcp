@@ -47,6 +47,18 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+
+          # The Claude plugin is installed from the repo, not from the release, so its version is
+          # committed. A release tag must match it (pre-releases: the X.Y.Z part).
+          if ($version) {
+              $base = $version.Split('-')[0]
+              $plugin = (Get-Content plugins/wsb-mcp/.claude-plugin/plugin.json -Raw | ConvertFrom-Json).version
+              $listed = ((Get-Content .claude-plugin/marketplace.json -Raw | ConvertFrom-Json).plugins |
+                  Where-Object name -eq 'wsb-mcp').version
+              if ($plugin -ne $base -or $listed -ne $base) {
+                  throw "Plugin version (plugin.json '$plugin', marketplace.json '$listed') must be '$base' for tag '$env:TAG'."
+              }
+          }
       - name: Build
         shell: pwsh
         env:
@@ -66,25 +78,78 @@ jobs:
         shell: powershell
         run: ./tests/WindowsSandboxTest.Tests.ps1
 
-      # Release packaging: same runner, SDK and build output as the tests above.
-      - name: Package release
+      # Release packaging, same runner and SDK as the tests above: self-contained, single-file,
+      # trimmed exes (no .NET needed), and the process-level tests run against the shipped x64 exe.
+      - name: Publish release executables
         if: github.ref_type == 'tag'
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          dotnet publish src/WsbMcp -c Release --no-build -o publish
-          if ($LASTEXITCODE) { throw "dotnet publish failed ($LASTEXITCODE)." }
-          $product = (Get-Item publish/wsb-mcp.exe).VersionInfo.ProductVersion.Split('+')[0]
-          if ($product -ne $env:VERSION) { throw "Published exe has version '$product', expected '$env:VERSION'." }
-          Copy-Item LICENSE, README.md, SECURITY.md, SPEC.md publish/
+          foreach ($rid in 'win-x64', 'win-arm64') {
+              dotnet publish src/WsbMcp -c Release -r $rid "-p:Version=$env:VERSION" -o "publish/$rid"
+              if ($LASTEXITCODE) { throw "dotnet publish $rid failed ($LASTEXITCODE)." }
+              $product = (Get-Item "publish/$rid/wsb-mcp.exe").VersionInfo.ProductVersion.Split('+')[0]
+              if ($product -ne $env:VERSION) { throw "$rid exe has version '$product', expected '$env:VERSION'." }
+              $extra = @(Get-ChildItem "publish/$rid" -File | Where-Object Name -ne 'wsb-mcp.exe')
+              if ($extra) { throw "$rid publish is not a single file: $($extra.Name -join ', ')" }
+          }
+      - name: Test the shipped x64 executable
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $env:WSB_MCP_EXE = (Resolve-Path publish/win-x64/wsb-mcp.exe).Path
+          dotnet run --project tests/WsbMcp.Tests -c Release --no-build -- EndToEndTests.Proxy SetupTests.Process
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory dist, winget | Out-Null
+          $docs = 'LICENSE', 'README.md', 'SECURITY.md', 'SPEC.md'
+          function Sha([string]$path) { (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
-          New-Item -ItemType Directory dist | Out-Null
-          $zip = "dist/wsb-mcp-$env:VERSION-win-x64.zip"
-          Compress-Archive -Path publish/* -DestinationPath $zip
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $(Split-Path $zip -Leaf)" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          $zips = @{}
+          foreach ($rid in 'win-x64', 'win-arm64') {
+              Copy-Item $docs "publish/$rid/"
+              $zips[$rid] = "dist/wsb-mcp-$env:VERSION-$rid.zip"
+              Compress-Archive -Path "publish/$rid/*" -DestinationPath $zips[$rid]
+          }
+
+          # MCPB bundle (Claude Desktop, MCP Registry): manifest + x64 exe; runs 'wsb-mcp.exe proxy'.
+          New-Item -ItemType Directory mcpb | Out-Null
+          $manifest = Get-Content packaging/mcpb/manifest.json -Raw | ConvertFrom-Json
+          $manifest.version = $env:VERSION
+          $manifest | ConvertTo-Json -Depth 10 | Set-Content mcpb/manifest.json -Encoding utf8NoBOM
+          Copy-Item publish/win-x64/wsb-mcp.exe, LICENSE, README.md mcpb/
+          $mcpb = "dist/wsb-mcp-$env:VERSION-win-x64.mcpb"
+          Compress-Archive -Path mcpb/* -DestinationPath "$mcpb.zip"
+          Move-Item "$mcpb.zip" $mcpb
+
+          # MCP Registry entry pointing at the MCPB release asset.
+          $server = Get-Content server.json -Raw | ConvertFrom-Json
+          $server.version = $env:VERSION
+          $server.packages[0].identifier = "$env:REPO_URL/releases/download/v$env:VERSION/$(Split-Path $mcpb -Leaf)"
+          $server.packages[0].fileSha256 = Sha $mcpb
+          $server | ConvertTo-Json -Depth 10 | Set-Content dist/server.json -Encoding utf8NoBOM
+
+          # winget manifests (first submission by hand; later ones by the winget job).
+          foreach ($template in Get-ChildItem packaging/winget/*.yaml) {
+              (Get-Content $template -Raw).
+                  Replace('{{VERSION}}', $env:VERSION).
+                  Replace('{{DATE}}', (Get-Date -Format 'yyyy-MM-dd')).
+                  Replace('{{SHA256_X64}}', (Sha $zips['win-x64']).ToUpperInvariant()).
+                  Replace('{{SHA256_ARM64}}', (Sha $zips['win-arm64']).ToUpperInvariant()) |
+                  Set-Content "winget/$($template.Name)" -Encoding utf8NoBOM
+          }
+
+          Get-ChildItem dist -File | Sort-Object Name | ForEach-Object { "$(Sha $_.FullName)  $($_.Name)" } |
+              Set-Content dist/SHA256SUMS.txt -Encoding ascii
       - name: Upload release package
         if: github.ref_type == 'tag'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -92,6 +157,24 @@ jobs:
           name: release
           path: dist/
           if-no-files-found: error
+      - name: Upload winget manifests
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: winget-manifests
+          path: winget/
+          if-no-files-found: error
+
+  # Validates packaging metadata with third-party tools from npm. Kept in its own job, so those
+  # tools never run where release artifacts are produced or published.
+  validate-packaging:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate MCPB manifest
+        run: npx --yes @anthropic-ai/mcpb validate packaging/mcpb/manifest.json
+      - name: Validate Claude plugin marketplace
+        run: npx --yes @anthropic-ai/claude-code plugin validate .
 
   release:
     needs: test
@@ -109,7 +192,9 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.zip
+          subject-path: |
+            dist/*.zip
+            dist/*.mcpb
       - name: Publish release
         shell: pwsh
         env:
@@ -140,3 +225,58 @@ jobs:
           # Publish only after all assets are uploaded.
           gh release edit $env:TAG --draft=false
           if ($LASTEXITCODE) { throw "gh release edit failed ($LASTEXITCODE)." }
+
+  # MCP Registry: final releases only, after the MCPB asset is public (the registry checks its hash).
+  # Only the OIDC permission, which mcp-publisher exchanges for a registry token for io.github.fmuecke/*.
+  registry:
+    needs: [test, release]
+    if: github.ref_type == 'tag' && needs.test.outputs.prerelease == 'false'
+    runs-on: windows-latest
+    permissions:
+      id-token: write
+    env:
+      # TODO: pin to a specific release (and verify its checksum) once chosen.
+      MCP_PUBLISHER_URL: https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_windows_amd64.tar.gz
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: dist
+      - name: Publish to the MCP Registry
+        shell: pwsh
+        working-directory: dist
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest $env:MCP_PUBLISHER_URL -OutFile mcp-publisher.tar.gz
+          tar -xzf mcp-publisher.tar.gz mcp-publisher.exe
+          ./mcp-publisher.exe login github-oidc
+          if ($LASTEXITCODE) { throw "mcp-publisher login failed ($LASTEXITCODE)." }
+          ./mcp-publisher.exe publish
+          if ($LASTEXITCODE) { throw "mcp-publisher publish failed ($LASTEXITCODE)." }
+
+  # winget: final releases only. Opens a pull request to microsoft/winget-pkgs for a package that
+  # already exists there (the first version is submitted by hand from the winget-manifests
+  # artifact). Enabled by the repository variable WINGET_AUTOSUBMIT=true plus the secret
+  # WINGET_TOKEN (classic PAT, public_repo scope, for the fork and the pull request).
+  winget:
+    needs: [test, release]
+    if: github.ref_type == 'tag' && needs.test.outputs.prerelease == 'false' && vars.WINGET_AUTOSUBMIT == 'true'
+    runs-on: windows-latest
+    permissions: {}
+    env:
+      # TODO: pin to a specific wingetcreate release (and verify its checksum) once chosen.
+      WINGETCREATE_URL: https://aka.ms/wingetcreate/latest
+    steps:
+      - name: Submit update to winget-pkgs
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.test.outputs.version }}
+          BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest $env:WINGETCREATE_URL -OutFile wingetcreate.exe
+          ./wingetcreate.exe update fmuecke.WsbMcp --version $env:VERSION `
+              --urls "$env:BASE/wsb-mcp-$env:VERSION-win-x64.zip|x64" "$env:BASE/wsb-mcp-$env:VERSION-win-arm64.zip|arm64" `
+              --submit --token $env:WINGET_TOKEN
+          if ($LASTEXITCODE) { throw "wingetcreate failed ($LASTEXITCODE)." }

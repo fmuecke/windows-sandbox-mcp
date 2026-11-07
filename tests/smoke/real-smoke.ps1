@@ -8,7 +8,7 @@
 #   pwsh -NoProfile -File tests\smoke\real-smoke.ps1 [-HoldForCtrlC]
 #
 # -HoldForCtrlC: at the end, start a guest and wait until the broker is stopped
-# with Ctrl+C (then verify on the host with `wsb list` that no sandbox is left).
+# with Ctrl+C or `wsb-mcp stop` (then verify on the host with `wsb list` that no sandbox is left).
 param(
     [string]$ProxyExe = (Join-Path $PSScriptRoot '..\..\src\WsbMcp\bin\Debug\net10.0-windows\wsb-mcp.exe'),
     [string]$PipeName = 'wsb-mcp',
@@ -155,7 +155,7 @@ try {
         $r = Invoke-Tool $session.Process 'sandbox_start' @{}
         Check 'start before Ctrl+C' (-not $r.IsError) $r.Text
         Write-Host ''
-        Write-Host 'Now press Ctrl+C in the broker window. Waiting up to 5 minutes...' -ForegroundColor Yellow
+        Write-Host 'Now stop the broker: Ctrl+C in its window, or ''wsb-mcp stop'' as the broker user. Waiting up to 5 minutes...' -ForegroundColor Yellow
         $exited = $session.Process.WaitForExit(300000)
         Check 'proxy ends when broker stops' $exited ''
         Write-Host 'On the host, verify that `wsb list` shows no sandbox.' -ForegroundColor Yellow
