@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>wsb-mcp</AssemblyName>
     <RootNamespace>WsbMcp</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>1.0.0</Version>
   </PropertyGroup>
   <!-- Releases are self-contained, single-file and trimmed (no .NET needed on the machine).
        The analyzers need the ILLink package from NuGet, so they run in CI (GitHub sets CI=true)

@@ -235,8 +235,10 @@ jobs:
     permissions:
       id-token: write
     env:
-      # TODO: pin to a specific release (and verify its checksum) once chosen.
-      MCP_PUBLISHER_URL: https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_windows_amd64.tar.gz
+      # Pinned tool: fill in a release tag of modelcontextprotocol/registry and the SHA-256 of its
+      # mcp-publisher_windows_amd64.tar.gz (README "Releasing"). The job refuses other bytes.
+      MCP_PUBLISHER_VERSION: v1.8.8
+      MCP_PUBLISHER_SHA256: 20417546bc6798acee317570c0d4041840069e081baa562dc9414c651eb274fa
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -247,7 +249,11 @@ jobs:
         working-directory: dist
         run: |
           $ErrorActionPreference = 'Stop'
-          Invoke-WebRequest $env:MCP_PUBLISHER_URL -OutFile mcp-publisher.tar.gz
+          if ($env:MCP_PUBLISHER_VERSION -eq 'TODO') { throw 'Pin MCP_PUBLISHER_VERSION and MCP_PUBLISHER_SHA256 in ci.yml first.' }
+          $url = "https://github.com/modelcontextprotocol/registry/releases/download/$env:MCP_PUBLISHER_VERSION/mcp-publisher_windows_amd64.tar.gz"
+          Invoke-WebRequest $url -OutFile mcp-publisher.tar.gz
+          $actual = (Get-FileHash mcp-publisher.tar.gz -Algorithm SHA256).Hash
+          if ($actual -ne $env:MCP_PUBLISHER_SHA256) { throw "mcp-publisher checksum mismatch: got $actual." }
           tar -xzf mcp-publisher.tar.gz mcp-publisher.exe
           ./mcp-publisher.exe login github-oidc
           if ($LASTEXITCODE) { throw "mcp-publisher login failed ($LASTEXITCODE)." }
@@ -264,8 +270,10 @@ jobs:
     runs-on: windows-latest
     permissions: {}
     env:
-      # TODO: pin to a specific wingetcreate release (and verify its checksum) once chosen.
-      WINGETCREATE_URL: https://aka.ms/wingetcreate/latest
+      # Pinned tool: fill in a release tag of microsoft/winget-create and the SHA-256 of its
+      # wingetcreate.exe (README "Releasing"). The job refuses other bytes.
+      WINGETCREATE_VERSION: v1.12.13.0
+      WINGETCREATE_SHA256: 24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea
     steps:
       - name: Submit update to winget-pkgs
         shell: pwsh
@@ -275,7 +283,10 @@ jobs:
           BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-          Invoke-WebRequest $env:WINGETCREATE_URL -OutFile wingetcreate.exe
+          if ($env:WINGETCREATE_VERSION -eq 'TODO') { throw 'Pin WINGETCREATE_VERSION and WINGETCREATE_SHA256 in ci.yml first.' }
+          Invoke-WebRequest "https://github.com/microsoft/winget-create/releases/download/$env:WINGETCREATE_VERSION/wingetcreate.exe" -OutFile wingetcreate.exe
+          $actual = (Get-FileHash wingetcreate.exe -Algorithm SHA256).Hash
+          if ($actual -ne $env:WINGETCREATE_SHA256) { throw "wingetcreate checksum mismatch: got $actual." }
           ./wingetcreate.exe update fmuecke.WsbMcp --version $env:VERSION `
               --urls "$env:BASE/wsb-mcp-$env:VERSION-win-x64.zip|x64" "$env:BASE/wsb-mcp-$env:VERSION-win-arm64.zip|arm64" `
               --submit --token $env:WINGET_TOKEN

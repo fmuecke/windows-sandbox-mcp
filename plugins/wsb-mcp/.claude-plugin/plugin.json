@@ -1,6 +1,6 @@
 {
   "name": "wsb-mcp",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Run risky commands in a disposable, offline Windows Sandbox: MCP tools plus a skill for using them.",
   "author": {
     "name": "Florian Mücke",

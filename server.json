@@ -8,7 +8,7 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/fmuecke/windows-sandbox-mcp#readme",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "packages": [
     {
       "registryType": "mcpb",
