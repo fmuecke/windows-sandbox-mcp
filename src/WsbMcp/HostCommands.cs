@@ -160,7 +160,11 @@ public static class HostCommands
             return PipeExists(pipeName) ? 1 : 0;
         }
         output.WriteLine("     Stopping the broker (and its guest)...");
-        if (await WaitAsync(() => !PipeExists(pipeName), TimeSpan.FromSeconds(90)).ConfigureAwait(false))
+        // The pipe closes before the broker has finished shutting down. Only when the process has
+        // exited does its stop event disappear; a new broker started earlier would find the old
+        // event and refuse to start (and the task would still count as running).
+        if (await WaitAsync(() => !PipeExists(pipeName) && !StopSignal.Exists(pipeName), TimeSpan.FromSeconds(90))
+                .ConfigureAwait(false))
         {
             output.WriteLine("OK   The broker stopped.");
             return 0;
@@ -320,18 +324,24 @@ public static class HostCommands
             output.WriteLine("OK   The broker is already running.");
             return 0;
         }
-        var (exit, text) = await RunToolAsync("schtasks.exe", ["/Run", "/TN", TaskName]).ConfigureAwait(false);
-        if (exit != 0)
+        // Task Scheduler silently ignores /Run while a previous instance of the task (for example
+        // one still shutting down) counts as running, so ask again until the pipe appears.
+        var watch = Stopwatch.StartNew();
+        while (watch.Elapsed < TimeSpan.FromSeconds(30))
         {
-            output.WriteLine($"FAIL Could not start the logon task '{TaskName}': {text.Trim()} Run 'wsb-mcp setup' first.");
-            return 1;
+            var (exit, text) = await RunToolAsync("schtasks.exe", ["/Run", "/TN", TaskName]).ConfigureAwait(false);
+            if (exit != 0)
+            {
+                output.WriteLine($"FAIL Could not start the logon task '{TaskName}': {text.Trim()} Run 'wsb-mcp setup' first.");
+                return 1;
+            }
+            if (await WaitAsync(() => PipeExists(pipeName), TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+            {
+                output.WriteLine("OK   The broker is running.");
+                return 0;
+            }
         }
-        if (await WaitAsync(() => PipeExists(pipeName), TimeSpan.FromSeconds(20)).ConfigureAwait(false))
-        {
-            output.WriteLine("OK   The broker is running.");
-            return 0;
-        }
-        output.WriteLine($"FAIL The broker did not come up within 20 s; see {Path.Combine(BrokerConfig.StateDirectory, "broker.log")}.");
+        output.WriteLine($"FAIL The broker did not come up within 30 s; see {Path.Combine(BrokerConfig.StateDirectory, "broker.log")}.");
         return 1;
     }
 

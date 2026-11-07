@@ -364,7 +364,19 @@ build in `C:\Program Files\wsb-mcp`:
 - `diag` as the broker user: all 6 checks OK; as the agent: the broker
   accepts the account;
 - `stop` and `start` against the task-started broker;
-- the real smoke test through the installed exe's new proxy: 19/19.
+- the real smoke test through the installed exe's new proxy: 19/19;
+- the smoke test with `-HoldForCtrlC` (current proxy from `fd06c92` against
+  the installed broker): 22/22. After `wsb-mcp stop`, the tools returned the
+  offline hint and the proxy stayed alive. `wsb list` was empty afterwards,
+  so the broker stopped its guest on shutdown.
+- the self-contained, trimmed release exe (`0.1.0-preview.2`, win-x64) ran as
+  the broker from the logon task.
+- `setup --force` with a running broker found a race. `stop` returned when
+  the pipe closed, before the process had exited, and the immediate
+  `schtasks /Run` started nothing: either Task Scheduler ignored it (the old
+  instance still counted as running) or the new broker found the old stop
+  event. Fixed: `stop` also waits for the stop event to disappear, and
+  `start` repeats `/Run` until the pipe appears.
 
 **Not yet validated on a real system:**
 - the upgrade sequence;

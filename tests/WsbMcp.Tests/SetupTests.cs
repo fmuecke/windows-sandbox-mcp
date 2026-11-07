@@ -122,10 +122,16 @@ public sealed class SetupTests : IDisposable
     {
         var pipe = "wsb-mcp-test-" + Guid.NewGuid().ToString("N");
         Assert.True(!StopSignal.TrySignal(pipe), "nothing to signal yet");
-        using var signal = StopSignal.Create(pipe);
+        Assert.True(!StopSignal.Exists(pipe), "no event yet");
+        var signal = StopSignal.Create(pipe);
+        Assert.True(StopSignal.Exists(pipe), "exists while the broker holds it");
         Assert.Contains("Refusing to start", Assert.Throws<InvalidOperationException>(() => StopSignal.Create(pipe)).Message);
         Assert.True(StopSignal.TrySignal(pipe), "signaled");
         Assert.True(signal.WaitOne(TimeSpan.FromSeconds(5)), "event set");
+        // 'stop' waits for this: the event disappears only when its holder (the broker) is gone.
+        signal.Dispose();
+        Assert.True(!StopSignal.Exists(pipe), "gone after the holder closed it");
+        using var again = StopSignal.Create(pipe); // A new broker can start now.
     }
 
     [Test]

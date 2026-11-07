@@ -35,6 +35,24 @@ public static class StopSignal
         return handle;
     }
 
+    /// <summary>True while a broker process still holds the event (it disappears when the process exits).</summary>
+    public static bool Exists(string pipeName)
+    {
+        try
+        {
+            if (!EventWaitHandle.TryOpenExisting(Name(pipeName), out var handle))
+            {
+                return false;
+            }
+            handle.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true; // Exists, but belongs to someone else.
+        }
+    }
+
     /// <summary>Signals a running broker; false if none is listening.</summary>
     public static bool TrySignal(string pipeName)
     {
