@@ -25,6 +25,7 @@ public sealed class Proxy(string pipeName, Stream clientInput, Stream clientOutp
     private readonly Dictionary<string, (JsonNode? Id, string Method)> _inFlight = [];
     private readonly ToolCatalog _offlineCatalog = ToolCatalog.Offline();
     private BrokerLink? _link;
+    private int _delivering;
     private string? _initializeLine;
     private bool _initialized;
     private string _lastFailure = "not connected yet";
@@ -98,13 +99,25 @@ public sealed class Proxy(string pipeName, Stream clientInput, Stream clientOutp
         }
         if (link is not null)
         {
-            if (method is not null && hasId)
+            // Register atomically with checking that the link is still current. Whoever detaches
+            // the link afterwards (pump or a failed send) answers every registered request; if it
+            // was detached in between, the request is handled offline below instead.
+            bool current;
+            lock (_sync)
             {
-                lock (_sync)
+                current = ReferenceEquals(_link, link);
+                if (current && method is not null && hasId)
                 {
                     _inFlight[Key(id)] = (id, method);
                 }
             }
+            if (!current)
+            {
+                link = null;
+            }
+        }
+        if (link is not null)
+        {
             if (await link.TrySendAsync(line, cancellationToken).ConfigureAwait(false))
             {
                 return;
@@ -226,7 +239,10 @@ public sealed class Proxy(string pipeName, Stream clientInput, Stream clientOutp
 
     private void GoOnline(BrokerLink link)
     {
-        Volatile.Write(ref _link, link);
+        lock (_sync)
+        {
+            _link = link;
+        }
         _ = PumpAsync(link);
     }
 
@@ -236,14 +252,34 @@ public sealed class Proxy(string pipeName, Stream clientInput, Stream clientOutp
         {
             while (await link.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
             {
+                // A response leaves _inFlight only together with entering _delivering, so DrainAsync
+                // never sees "nothing pending" while its write to the client is still under way.
+                var answered = false;
                 if (Parse(line) is { } message && message.ContainsKey("id") && !message.ContainsKey("method"))
                 {
                     lock (_sync)
                     {
-                        _inFlight.Remove(Key(message["id"]));
+                        answered = _inFlight.Remove(Key(message["id"]));
+                        if (answered)
+                        {
+                            _delivering++;
+                        }
                     }
                 }
-                await WriteClientAsync(line).ConfigureAwait(false);
+                try
+                {
+                    await WriteClientAsync(line).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (answered)
+                    {
+                        lock (_sync)
+                        {
+                            _delivering--;
+                        }
+                    }
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or ObjectDisposedException)
@@ -265,16 +301,31 @@ public sealed class Proxy(string pipeName, Stream clientInput, Stream clientOutp
             _link = null;
             pending = [.. _inFlight.Values];
             _inFlight.Clear();
+            _delivering += pending.Count;
+            _lastFailure = reason;
         }
-        _lastFailure = reason;
         link.Dispose();
         foreach (var (id, method) in pending)
         {
             var response = method == "tools/call" ? Result(id, HintResult()) : Error(id, -32000, Hint);
-            await WriteClientAsync(response.ToJsonString()).ConfigureAwait(false);
+            try
+            {
+                await WriteClientAsync(response.ToJsonString()).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_sync)
+                {
+                    _delivering--;
+                }
+            }
         }
     }
 
+    /// <summary>
+    /// Waits until every forwarded request has been answered and that answer written to the client
+    /// (by the pump, or with the hint after the broker was lost).
+    /// </summary>
     private async Task DrainAsync(TimeSpan limit)
     {
         var deadline = DateTime.UtcNow + limit;
@@ -282,7 +333,7 @@ public sealed class Proxy(string pipeName, Stream clientInput, Stream clientOutp
         {
             lock (_sync)
             {
-                if (_inFlight.Count == 0 || _link is null)
+                if (_inFlight.Count == 0 && _delivering == 0)
                 {
                     return;
                 }

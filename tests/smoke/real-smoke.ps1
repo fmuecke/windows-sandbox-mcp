@@ -7,8 +7,9 @@
 #
 #   pwsh -NoProfile -File tests\smoke\real-smoke.ps1 [-HoldForCtrlC]
 #
-# -HoldForCtrlC: at the end, start a guest and wait until the broker is stopped
-# with Ctrl+C or `wsb-mcp stop` (then verify on the host with `wsb list` that no sandbox is left).
+# -HoldForCtrlC: at the end, start a guest and wait until the broker is stopped with
+# Ctrl+C or `wsb-mcp stop`; the tools must then return the offline hint. Afterwards verify
+# on the host with `wsb list` that no sandbox is left.
 param(
     [string]$ProxyExe = (Join-Path $PSScriptRoot '..\..\src\WsbMcp\bin\Debug\net10.0-windows\wsb-mcp.exe'),
     [string]$PipeName = 'wsb-mcp',
@@ -156,9 +157,16 @@ try {
         Check 'start before Ctrl+C' (-not $r.IsError) $r.Text
         Write-Host ''
         Write-Host 'Now stop the broker: Ctrl+C in its window, or ''wsb-mcp stop'' as the broker user. Waiting up to 5 minutes...' -ForegroundColor Yellow
-        $exited = $session.Process.WaitForExit(300000)
-        Check 'proxy ends when broker stops' $exited ''
-        Write-Host 'On the host, verify that `wsb list` shows no sandbox.' -ForegroundColor Yellow
+        # The proxy stays alive without a broker and answers tool calls with the offline hint.
+        $deadline = (Get-Date).AddMinutes(5)
+        do {
+            Start-Sleep -Seconds 3
+            $r = Invoke-Tool $session.Process 'sandbox_status'
+            $offline = $r.IsError -and $r.Text -match 'not reachable'
+        } until ($offline -or (Get-Date) -gt $deadline)
+        Check 'tools return the offline hint after the broker stopped' $offline $r.Text
+        Check 'proxy stays alive without a broker' (-not $session.Process.HasExited) ''
+        Write-Host 'On the host, verify that `wsb list` shows no sandbox (the broker stops its guest on shutdown).' -ForegroundColor Yellow
     }
 }
 catch {

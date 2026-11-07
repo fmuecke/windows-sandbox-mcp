@@ -59,9 +59,11 @@ public static class HostCommands
             output.WriteLine($"FAIL {configPath} already exists. Use --force to replace it, or 'wsb-mcp uninstall' first.");
             return 1;
         }
+        // Validate the new configuration next to the real one (same folder, so the same location
+        // checks apply) before touching anything that is running.
         Directory.CreateDirectory(BrokerConfig.StateDirectory);
-        var previous = File.Exists(configPath) ? File.ReadAllText(configPath) : null;
-        File.WriteAllText(configPath, new JsonObject
+        var candidate = configPath + ".new";
+        File.WriteAllText(candidate, new JsonObject
         {
             ["agentAccount"] = options.Agent,
             ["allowedRoot"] = options.Root,
@@ -70,21 +72,24 @@ public static class HostCommands
         BrokerConfig config;
         try
         {
-            config = BrokerConfig.Load(configPath);
+            config = BrokerConfig.Load(candidate);
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            if (previous is null)
-            {
-                File.Delete(configPath);
-            }
-            else
-            {
-                File.WriteAllText(configPath, previous);
-            }
+            File.Delete(candidate);
             output.WriteLine($"FAIL {ex.Message}");
             return 1;
         }
+
+        // A running broker keeps its old configuration until it restarts: stop it first (it uses
+        // the pipe from the old configuration), so the new one is what runs afterwards.
+        if (await StopAsync(output).ConfigureAwait(false) != 0)
+        {
+            File.Delete(candidate);
+            output.WriteLine("FAIL The running broker could not be stopped; the configuration was not changed.");
+            return 1;
+        }
+        File.Move(candidate, configPath, overwrite: true);
         output.WriteLine($"OK   Wrote {configPath} (agent {config.AgentAccount}, root {config.AllowedRoot})");
 
         if (!AgentMayExecute(exe, config.AgentSid))
@@ -114,12 +119,31 @@ public static class HostCommands
         }
 
         output.WriteLine();
-        output.WriteLine($"Next, as {config.AgentAccount}, in Claude Code:");
-        output.WriteLine("  /plugin marketplace add fmuecke/windows-sandbox-mcp");
-        output.WriteLine("  /plugin install wsb-mcp@windows-sandbox-mcp");
-        output.WriteLine("or register it directly:");
-        output.WriteLine($"  claude mcp add --scope user wsb -- \"{exe}\" proxy");
+        foreach (var line in ClaudeSideInstructions(config.AgentAccount, exe, config.PipeName))
+        {
+            output.WriteLine(line);
+        }
         return 0;
+    }
+
+    /// <summary>What the agent has to do next. The plugin always uses the default pipe.</summary>
+    internal static IEnumerable<string> ClaudeSideInstructions(string agent, string exe, string pipeName)
+    {
+        var defaultPipe = string.Equals(pipeName, BrokerConfig.DefaultPipeName, StringComparison.OrdinalIgnoreCase);
+        yield return $"Next, as {agent}, in Claude Code:";
+        if (defaultPipe)
+        {
+            yield return "  /plugin marketplace add fmuecke/windows-sandbox-mcp";
+            yield return "  /plugin install wsb-mcp@windows-sandbox-mcp";
+            yield return "or register it directly:";
+            yield return $"  claude mcp add --scope user wsb -- \"{exe}\" proxy";
+        }
+        else
+        {
+            yield return $"  claude mcp add --scope user wsb -- \"{exe}\" proxy --pipe {pipeName}";
+            yield return $"(The plugin always connects to the default pipe '{BrokerConfig.DefaultPipeName}', " +
+                         $"so with the custom pipe '{pipeName}' register the server directly as above.)";
+        }
     }
 
     public static Task<int> StartAsync(TextWriter output) =>

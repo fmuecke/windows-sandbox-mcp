@@ -105,6 +105,19 @@ public sealed class SetupTests : IDisposable
     }
 
     [Test]
+    public void ClaudeSideInstructionsMatchThePipe()
+    {
+        var standard = string.Join('\n', HostCommands.ClaudeSideInstructions("A", @"C:\x\wsb-mcp.exe", "wsb-mcp"));
+        Assert.Contains("/plugin install", standard);
+        Assert.Contains("\"C:\\x\\wsb-mcp.exe\" proxy", standard);
+        Assert.True(!standard.Contains("--pipe", StringComparison.Ordinal), standard);
+
+        var custom = string.Join('\n', HostCommands.ClaudeSideInstructions("A", @"C:\x\wsb-mcp.exe", "lab"));
+        Assert.Contains("proxy --pipe lab", custom);
+        Assert.True(!custom.Contains("/plugin install", StringComparison.Ordinal), "plugin would use the default pipe");
+    }
+
+    [Test]
     public void StopSignalRefusesASecondOwnerAndCanBeSignaled()
     {
         var pipe = "wsb-mcp-test-" + Guid.NewGuid().ToString("N");

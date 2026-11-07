@@ -96,12 +96,12 @@ three keys; the others are optional:
 ```json
 {
   "agentAccount": "AgentSandbox",
-  "allowedRoot": "C:\AgentSandbox",
+  "allowedRoot": "C:\\AgentSandbox",
   "pipeName": "wsb-mcp",
   "idleTimeoutMinutes": 30,
   "maxExecTimeoutSeconds": 1800,
   "startupTimeoutSeconds": 120,
-  "logPath": "%LOCALAPPDATA%\wsb-mcp\broker.log"
+  "logPath": "%LOCALAPPDATA%\\wsb-mcp\\broker.log"
 }
 ```
 Unknown keys are rejected. `wsbPath` overrides `wsb.exe`, for tests.
@@ -163,7 +163,7 @@ As the agent account, with the broker running:
 ```powershell
 pwsh -NoProfile -File tests\smoke\real-smoke.ps1 -ProxyExe (Get-Command wsb-mcp).Source -HoldForCtrlC
 ```
-It runs 21 checks:
+It runs 22 checks (19 without `-HoldForCtrlC`):
 - folder rules
 - read-only input
 - no network
@@ -172,8 +172,8 @@ It runs 21 checks:
 - timeout
 - stop on disconnect
 
-At the end it asks you to stop the broker (`wsb-mcp stop`). Then `wsb list`
-must show no sandbox.
+At the end it asks you to stop the broker (`wsb-mcp stop`) and checks that the
+tools then return the offline hint. Afterwards `wsb list` must show no sandbox.
 
 ### Update
 
